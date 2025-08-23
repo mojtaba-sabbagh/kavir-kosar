@@ -1,10 +1,12 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useState, useMemo } from 'react';
 
 type Role = { id: string; name: string };
 type Form = { id: string; code: string; titleFa: string };
 type Perm = { id: string; roleId: string; formId: string; canRead: boolean; canSubmit: boolean };
+
+type Cell = { canRead: boolean; canSubmit: boolean };
 
 export default function PermissionsEditor({
   roles,
@@ -15,113 +17,117 @@ export default function PermissionsEditor({
   forms: Form[];
   perms: Perm[];
 }) {
-  const [local, setLocal] = useState<Record<string, { canRead: boolean; canSubmit: boolean }>>(() => {
-    const map: Record<string, { canRead: boolean; canSubmit: boolean }> = {};
-    perms.forEach((p) => {
-      map[`${p.roleId}:${p.formId}`] = { canRead: p.canRead, canSubmit: p.canSubmit };
-    });
+  // Build initial matrix: key = `${roleId}:${formId}`
+  const initial = useMemo(() => {
+    const map: Record<string, Cell> = {};
+    for (const r of roles) for (const f of forms) map[`${r.id}:${f.id}`] = { canRead: false, canSubmit: false };
+    for (const p of perms) map[`${p.roleId}:${p.formId}`] = { canRead: !!p.canRead, canSubmit: !!p.canSubmit };
     return map;
-  });
+  }, [roles, forms, perms]);
 
-  const toggle = (roleId: string, formId: string, key: 'canRead' | 'canSubmit') => {
-    const k = `${roleId}:${formId}`;
-    setLocal((prev) => ({
-      ...prev,
-      [k]: {
-        canRead: prev[k]?.canRead ?? false,
-        canSubmit: prev[k]?.canSubmit ?? false,
-        [key]: !(prev[k]?.[key] ?? false),
-      },
-    }));
+  const [matrix, setMatrix] = useState<Record<string, Cell>>(initial);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState<null | boolean>(null);
+
+  const onToggle = (roleId: string, formId: string, field: 'canRead' | 'canSubmit') => {
+    const key = `${roleId}:${formId}`;
+    setSaved(null);
+    setMatrix(prev => {
+      const cur = prev[key] || { canRead: false, canSubmit: false };
+      const next: Cell = { ...cur };
+
+      if (field === 'canSubmit') {
+        next.canSubmit = !cur.canSubmit;
+        if (next.canSubmit) next.canRead = true;           // ارسال ⇒ مشاهده = true
+      } else {
+        next.canRead = !cur.canRead;
+        if (!next.canRead) next.canSubmit = false;         // برداشتن مشاهده ⇒ ارسال = false
+      }
+
+      return { ...prev, [key]: next };
+    });
   };
 
-  const minWidthPx = useMemo(() => {
-    // ~220px per form col + ~220px for the first sticky column
-    return Math.max(880, 220 * (forms.length + 1));
-  }, [forms.length]);
-
   const save = async () => {
+    setSaving(true); setSaved(null);
+    // Normalize before sending (extra safety on client)
+    const normalized: Record<string, Cell> = {};
+    for (const [k, v] of Object.entries(matrix)) {
+      normalized[k] = {
+        canRead: v.canSubmit ? true : !!v.canRead,
+        canSubmit: v.canRead ? !!v.canSubmit : false,
+      };
+    }
+
     const res = await fetch('/api/admin/permissions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ matrix: local }),
+      body: JSON.stringify({ matrix: normalized }),
     });
-    if (res.ok) location.reload();
-    else alert('ذخیره مجوزها ناموفق بود');
+    setSaving(false);
+    setSaved(res.ok);
+    if (!res.ok) {
+      try { console.error(await res.json()); } catch {}
+      alert('ذخیره مجوزها ناموفق بود');
+    }
   };
 
   return (
-    <div className="p-4">
-      <div
-        className="inline-block align-top"
-        style={{ minWidth: `${minWidthPx}px` }} // widen based on column count
-      >
-        <table className="w-full text-sm border-separate border-spacing-0">
-          <thead>
-            <tr className="bg-gray-50">
-              {/* Sticky first header cell */}
-              <th
-                className="sticky right-0 z-20 bg-gray-50 border-b px-4 py-3 text-right"
-                style={{ minWidth: 140 }}
-              >
-                نقش / فرم
-              </th>
-              {forms.map((f) => (
-                <th key={f.id} className="border-b px-4 py-3 whitespace-nowrap text-right">
-                  <div className="font-medium">{f.titleFa}</div>
-                  <div className="text-[11px] text-gray-500 mt-0.5">{f.code}</div>
-                </th>
-              ))}
-            </tr>
-          </thead>
-
-          <tbody>
-            {roles.map((r) => (
-              <tr key={r.id} className="odd:bg-white even:bg-gray-50">
-                {/* Sticky first column */}
-                <td
-                  className="sticky right-0 z-10 bg-inherit border-t px-4 py-3 font-medium whitespace-nowrap"
-                  style={{ minWidth: 140}}
-                >
-                  {r.name}
-                </td>
-
-                {forms.map((f) => {
-                  const k = `${r.id}:${f.id}`;
-                  const v = local[k] || { canRead: false, canSubmit: false };
-                  return (
-                    <td key={k} className="border-t px-4 py-2">
-                      <div className="flex items-center gap-4 whitespace-nowrap">
-                        <label className="inline-flex items-center gap-1">
-                          <input
-                            type="checkbox"
-                            checked={!!v.canRead}
-                            onChange={() => toggle(r.id, f.id, 'canRead')}
-                          />
-                          <span>خواندن</span>
-                        </label>
-                        <label className="inline-flex items-center gap-1">
-                          <input
-                            type="checkbox"
-                            checked={!!v.canSubmit}
-                            onChange={() => toggle(r.id, f.id, 'canSubmit')}
-                          />
-                          <span>ارسال</span>
-                        </label>
-                      </div>
-                    </td>
-                  );
-                })}
-              </tr>
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-right text-gray-500">
+            <th className="py-2 w-40">نقش \\ فرم</th>
+            {forms.map(f => (
+              <th key={f.id} className="py-2 whitespace-nowrap">{f.titleFa}</th>
             ))}
-          </tbody>
-        </table>
-      </div>
+          </tr>
+        </thead>
+        <tbody>
+          {roles.map(r => (
+            <tr key={r.id} className="border-t">
+              <td className="py-2 font-medium">{r.name}</td>
+              {forms.map(f => {
+                const k = `${r.id}:${f.id}`;
+                const v = matrix[k] || { canRead: false, canSubmit: false };
+                return (
+                  <td key={k} className="py-2">
+                    <div className="flex items-center gap-4">
+                      <label className="inline-flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={v.canRead}
+                          onChange={() => onToggle(r.id, f.id, 'canRead')}
+                        />
+                        <span>مشاهده</span>
+                      </label>
+                      <label className="inline-flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={v.canSubmit}
+                          onChange={() => onToggle(r.id, f.id, 'canSubmit')}
+                        />
+                        <span>ارسال</span>
+                      </label>
+                    </div>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
 
-      <div className="mt-4">
-        <button onClick={save} className="rounded-md bg-gray-900 text-white px-4 py-2">
-          ذخیره
+      <div className="mt-4 flex items-center gap-3">
+        <button
+          onClick={save}
+          disabled={saving}
+          className="rounded-md bg-gray-900 text-white px-4 py-2 disabled:opacity-50"
+        >
+          {saving ? 'در حال ذخیره…' : 'ذخیره'}
         </button>
+        {saved === true && <span className="text-green-600 text-xs">ذخیره شد</span>}
+        {saved === false && <span className="text-red-600 text-xs">خطا در ذخیره</span>}
       </div>
     </div>
   );

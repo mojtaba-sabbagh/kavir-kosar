@@ -1,0 +1,65 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  // output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id String @id @default(cuid())
+  email String @unique
+  name String?
+  passwordHash String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  roles UserRole[]
+}
+
+
+model Role {
+  id String @id @default(cuid())
+  name String @unique // e.g., "admin", "manager", "employee"
+  users UserRole[]
+  forms RoleFormPermission[]
+}
+
+
+model UserRole {
+  id String @id @default(cuid())
+  user User @relation(fields: [userId], references: [id])
+  userId String
+  role Role @relation(fields: [roleId], references: [id])
+  roleId String
+  @@unique([userId, roleId])
+}
+
+
+model Form {
+  id String @id @default(cuid())
+  code String @unique // کد یکتا برای مسیر‌دهی (مثلاً HR-REQ-01)
+  titleFa String
+  sortOrder Int @default(100)
+  isActive Boolean @default(true)
+  rolePermissions RoleFormPermission[]
+}
+
+
+model RoleFormPermission {
+  id String @id @default(cuid())
+  role Role @relation(fields: [roleId], references: [id])
+  roleId String
+  form Form @relation(fields: [formId], references: [id])
+  formId String
+  canRead Boolean @default(true)
+  canSubmit Boolean @default(true)
+  @@unique([roleId, formId])
+}

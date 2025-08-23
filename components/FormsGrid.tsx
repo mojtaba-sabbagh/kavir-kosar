@@ -11,7 +11,7 @@ export type FormsGridItem = {
 
 export default function FormsGrid({ forms }: { forms: FormsGridItem[] }) {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-4 gap-4">
       {forms.map((f) => {
         // فقط نمایش کارت‌هایی که حداقل Read دارند
         if (!f.canRead && !f.canSubmit) return null;

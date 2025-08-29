@@ -26,10 +26,13 @@ model User {
 
 
 model Role {
-  id String @id @default(cuid())
-  name String @unique // e.g., "admin", "manager", "employee"
-  users UserRole[]
-  forms RoleFormPermission[]
+  id                 String                  @id @default(uuid())
+  name               String                  @unique
+  // existing relations
+  users              UserRole[]
+  formPermissions    RoleFormPermission[]    // ⬅️ your form permissions back-relation
+  // NEW back-relation for reports:
+  reportPermissions  RoleReportPermission[]  // ⬅️ add this
 }
 
 
@@ -50,16 +53,111 @@ model Form {
   sortOrder Int @default(100)
   isActive Boolean @default(true)
   rolePermissions RoleFormPermission[]
+
+  confirmers        FormConfirmer[]
+  finalConfirmer    FormFinalConfirmer?
 }
 
 
 model RoleFormPermission {
-  id String @id @default(cuid())
-  role Role @relation(fields: [roleId], references: [id])
-  roleId String
-  form Form @relation(fields: [formId], references: [id])
-  formId String
-  canRead Boolean @default(true)
-  canSubmit Boolean @default(true)
-  @@unique([roleId, formId])
+  id        String  @id @default(uuid())
+  roleId    String
+  formId    String
+
+  // existing
+  canRead        Boolean @default(false)
+  canSubmit      Boolean @default(false)
+
+  // NEW
+  canConfirm         Boolean @default(false)  // تأیید کننده
+  canFinalConfirm    Boolean @default(false)  // تأیید کننده نهایی
+
+  role      Role    @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  form      Form    @relation(fields: [formId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, formId], name: "roleId_formId")
+}
+
+model FormConfirmer {
+  id      String @id @default(uuid())
+  formId  String
+  userId  String
+
+  form    Form   @relation(fields: [formId], references: [id], onDelete: Cascade)
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([formId, userId])
+}
+
+model FormFinalConfirmer {
+  id      String @id @default(uuid())
+  formId  String  @unique   // one final confirmer per form
+  userId  String           // choose a specific user
+
+  form    Form   @relation(fields: [formId], references: [id], onDelete: Cascade)
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model FormEntry {
+  id         String   @id @default(uuid())
+  formId     String
+  createdBy  String
+  createdAt  DateTime @default(now())
+  // your payload columns here…
+
+  // workflow state (optional helpers)
+  firstConfirmedAt DateTime?
+  finalConfirmedAt DateTime?
+
+  form       Form   @relation(fields: [formId], references: [id], onDelete: Cascade)
+  tasks      ConfirmationTask[]
+}
+
+enum ConfirmationStatus {
+  pending
+  approved
+  superseded // other confirmers locked after one approves
+}
+
+model ConfirmationTask {
+  id           String              @id @default(uuid())
+  formEntryId  String
+  userId       String
+  isFinal      Boolean             @default(false)
+  status       ConfirmationStatus  @default(pending)
+  signedAt     DateTime?
+
+  entry        FormEntry @relation(fields: [formEntryId], references: [id], onDelete: Cascade)
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isFinal, status])
+  @@index([formEntryId, isFinal, status])
+}
+
+
+model Report {
+  id              String                  @id @default(uuid())
+  code            String                  @unique
+  titleFa         String
+  url             String?
+  sortOrder       Int                     @default(100)
+  isActive        Boolean                 @default(true)
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+
+  // back-relation to RoleReportPermission (you likely already had this)
+  rolePermissions RoleReportPermission[]
+}
+
+model RoleReportPermission {
+  id        String  @id @default(uuid())
+  roleId    String
+  reportId  String
+  canView   Boolean @default(false)
+
+  // forward relations with explicit fields/references
+  role      Role    @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  report    Report  @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, reportId], name: "roleId_reportId")
 }

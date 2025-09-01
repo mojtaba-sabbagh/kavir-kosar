@@ -65,13 +65,100 @@ async function main() {
   });
 
   console.log('✅ Seed done. Login with admin@tordilla.ir / Admin@12345');
+
+// 3) OPS-WASTE form
+const wasteForm = await prisma.form.upsert({
+  where: { code: 'OPS-WASTE' },
+  update: { titleFa: 'فرم ثبت ضایعات تولید', isActive: true, sortOrder: 50 },
+  create: { code: 'OPS-WASTE', titleFa: 'فرم ثبت ضایعات تولید', isActive: true, sortOrder: 50 },
+});
+
+  // Remove old fields (if re-seeding)
+  await prisma.formField.deleteMany({ where: { formId: wasteForm.id } });
+
+  // Create fields
+  await prisma.formField.createMany({
+    data: [
+      {
+        formId: wasteForm.id,
+        key: 'date',
+        labelFa: 'تاریخ',
+        type: 'date',
+        required: true,
+        order: 10,
+      },
+      {
+        formId: wasteForm.id,
+        key: 'shift',
+        labelFa: 'شیفت',
+        type: 'select',
+        required: true,
+        order: 20,
+        config: {
+          options: [
+            { value: '1', label: '۱' },
+            { value: '2', label: '۲' },
+            { value: '3', label: '۳' },
+          ],
+        } as any,
+      },
+      {
+        formId: wasteForm.id,
+        key: 'wasteType',
+        labelFa: 'ضایعات',
+        type: 'select',
+        required: true,
+        order: 30,
+        config: {
+          options: [
+            { value: 'paper', 'label': 'برگه' },
+            { value: 'dough', 'label': 'خمیر' },
+            { value: 'under-screw', 'label': 'زیرماردون' },
+          ],
+        } as any,
+      },
+      {
+        formId: wasteForm.id,
+        key: 'amount',
+        labelFa: 'مقدار (کیلوگرم)',
+        type: 'number',
+        required: true,
+        order: 40,
+        config: { min: 0, step: 0.01, decimals: true } as any,
+      },
+      // Example file attachment field (optional for future forms)
+      // {
+      //   formId: wasteForm.id,
+      //   key: 'attachment',
+      //   labelFa: 'پیوست',
+      //   type: 'file',
+      //   required: false,
+      //   order: 50,
+      // },
+    ],
+  });
+
+  // 4) Give admin full permissions on this form
+  await prisma.roleFormPermission.upsert({
+    where: { roleId_formId: { roleId: adminRole.id, formId: wasteForm.id } },
+    update: {
+      canRead: true, canSubmit: true, canConfirm: true, canFinalConfirm: true,
+    },
+    create: {
+      roleId: adminRole.id, formId: wasteForm.id,
+      canRead: true, canSubmit: true, canConfirm: true, canFinalConfirm: true,
+    },
+  });
+
+  console.log('✅ Seed finished: admin + OPS-WASTE form and fields created.');
 }
 
 main()
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  })
-  .finally(async () => {
+  .then(async () => {
     await prisma.$disconnect();
+  })
+  .catch(async (e) => {
+    console.error(e);
+    await prisma.$disconnect();
+    process.exit(1);
   });

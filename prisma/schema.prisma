@@ -15,149 +15,203 @@ datasource db {
 }
 
 model User {
-  id String @id @default(cuid())
-  email String @unique
-  name String?
+  id           String     @id @default(cuid())
+  email        String     @unique
+  name         String?
   passwordHash String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  roles UserRole[]
-}
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  roles        UserRole[]
 
+  formConfirmations      FormConfirmer[] // users assigned as regular confirmers
+  formFinalConfirmations FormFinalConfirmer[] // users assigned as final confirmer
+  confirmationTasks      ConfirmationTask[] // per-entry tasks for this user
+}
 
 model Role {
-  id                 String                  @id @default(uuid())
-  name               String                  @unique
+  id                String                 @id @default(uuid())
+  name              String                 @unique
   // existing relations
-  users              UserRole[]
-  formPermissions    RoleFormPermission[]    // ⬅️ your form permissions back-relation
+  users             UserRole[]
+  formPermissions   RoleFormPermission[] // ⬅️ your form permissions back-relation
   // NEW back-relation for reports:
-  reportPermissions  RoleReportPermission[]  // ⬅️ add this
+  reportPermissions RoleReportPermission[] // ⬅️ add this
 }
-
 
 model UserRole {
-  id String @id @default(cuid())
-  user User @relation(fields: [userId], references: [id])
+  id     String @id @default(cuid())
   userId String
-  role Role @relation(fields: [roleId], references: [id])
   roleId String
-  @@unique([userId, roleId])
-}
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
+  @@unique([userId, roleId], name: "userId_roleId")
+}
 
 model Form {
-  id String @id @default(cuid())
-  code String @unique // کد یکتا برای مسیر‌دهی (مثلاً HR-REQ-01)
-  titleFa String
-  sortOrder Int @default(100)
-  isActive Boolean @default(true)
+  id        String   @id @default(uuid())
+  code      String   @unique
+  titleFa   String
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(100)
+  version   Int      @default(1) // bump when definition changes
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // RBAC
   rolePermissions RoleFormPermission[]
 
-  confirmers        FormConfirmer[]
-  finalConfirmer    FormFinalConfirmer?
+  // Definition (metadata)
+  fields FormField[]
+
+  // Entries
+  entries FormEntry[]
+
+  confirmers     FormConfirmer[]
+  finalConfirmer FormFinalConfirmer?
 }
 
-
-model RoleFormPermission {
-  id        String  @id @default(uuid())
-  roleId    String
-  formId    String
-
-  // existing
-  canRead        Boolean @default(false)
-  canSubmit      Boolean @default(false)
-
-  // NEW
-  canConfirm         Boolean @default(false)  // تأیید کننده
-  canFinalConfirm    Boolean @default(false)  // تأیید کننده نهایی
-
-  role      Role    @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  form      Form    @relation(fields: [formId], references: [id], onDelete: Cascade)
-
-  @@unique([roleId, formId], name: "roleId_formId")
+enum FieldType {
+  text
+  textarea
+  number
+  date
+  datetime
+  select
+  multiselect
+  checkbox
+  file
 }
 
-model FormConfirmer {
-  id      String @id @default(uuid())
-  formId  String
-  userId  String
+model FormField {
+  id       String    @id @default(uuid())
+  formId   String
+  key      String // e.g. "employeeCode"
+  labelFa  String
+  type     FieldType
+  required Boolean   @default(false)
+  order    Int       @default(0)
+  config   Json? // validation/options per field
+  form     Form      @relation(fields: [formId], references: [id], onDelete: Cascade)
 
-  form    Form   @relation(fields: [formId], references: [id], onDelete: Cascade)
-  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([formId, userId])
+  @@unique([formId, key], name: "formId_key")
 }
 
-model FormFinalConfirmer {
-  id      String @id @default(uuid())
-  formId  String  @unique   // one final confirmer per form
-  userId  String           // choose a specific user
-
-  form    Form   @relation(fields: [formId], references: [id], onDelete: Cascade)
-  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+enum EntryStatus {
+  draft
+  submitted
+  confirmed
+  finalConfirmed
 }
 
 model FormEntry {
-  id         String   @id @default(uuid())
-  formId     String
-  createdBy  String
-  createdAt  DateTime @default(now())
-  // your payload columns here…
+  id        String   @id @default(uuid())
+  formId    String
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  // workflow state (optional helpers)
+  // hybrid payload (answers)
+  payload Json
+
+  // snapshot of form definition
+  formVersion Int @default(1)
+
+  // workflow timestamps (optional convenience)
   firstConfirmedAt DateTime?
   finalConfirmedAt DateTime?
+  status           EntryStatus @default(submitted)
 
-  form       Form   @relation(fields: [formId], references: [id], onDelete: Cascade)
-  tasks      ConfirmationTask[]
+  form  Form               @relation(fields: [formId], references: [id], onDelete: Cascade)
+  tasks ConfirmationTask[]
+
+  @@index([formId, createdAt])
+  @@index([createdBy, createdAt])
+}
+
+model FormConfirmer {
+  id     String @id @default(uuid())
+  formId String
+  userId String
+
+  form Form @relation(fields: [formId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([formId, userId], name: "formId_userId")
+  @@index([userId])
+}
+
+model FormFinalConfirmer {
+  id     String @id @default(uuid())
+  formId String @unique // one final confirmer per form
+  userId String
+
+  form Form @relation(fields: [formId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model RoleFormPermission {
+  id     String @id @default(uuid())
+  roleId String
+  formId String
+
+  canRead         Boolean @default(false) // مشاهده
+  canSubmit       Boolean @default(false) // ارسال
+  canConfirm      Boolean @default(false) // تأیید کننده
+  canFinalConfirm Boolean @default(false) // تأیید کننده نهایی
+
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  form Form @relation(fields: [formId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, formId], name: "roleId_formId")
 }
 
 enum ConfirmationStatus {
   pending
   approved
-  superseded // other confirmers locked after one approves
+  superseded
 }
 
 model ConfirmationTask {
-  id           String              @id @default(uuid())
-  formEntryId  String
-  userId       String
-  isFinal      Boolean             @default(false)
-  status       ConfirmationStatus  @default(pending)
-  signedAt     DateTime?
+  id          String             @id @default(uuid())
+  formEntryId String
+  userId      String
+  isFinal     Boolean            @default(false)
+  status      ConfirmationStatus @default(pending)
+  signedAt    DateTime?
 
-  entry        FormEntry @relation(fields: [formEntryId], references: [id], onDelete: Cascade)
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entry FormEntry @relation(fields: [formEntryId], references: [id], onDelete: Cascade)
+  user  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, isFinal, status])
   @@index([formEntryId, isFinal, status])
 }
 
-
 model Report {
-  id              String                  @id @default(uuid())
-  code            String                  @unique
-  titleFa         String
-  url             String?
-  sortOrder       Int                     @default(100)
-  isActive        Boolean                 @default(true)
-  createdAt       DateTime                @default(now())
-  updatedAt       DateTime                @updatedAt
+  id        String   @id @default(uuid())
+  code      String   @unique
+  titleFa   String
+  url       String?
+  sortOrder Int      @default(100)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // back-relation to RoleReportPermission (you likely already had this)
   rolePermissions RoleReportPermission[]
 }
 
 model RoleReportPermission {
-  id        String  @id @default(uuid())
-  roleId    String
-  reportId  String
-  canView   Boolean @default(false)
+  id       String  @id @default(uuid())
+  roleId   String
+  reportId String
+  canView  Boolean @default(false)
 
   // forward relations with explicit fields/references
-  role      Role    @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  report    Report  @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@unique([roleId, reportId], name: "roleId_reportId")
 }

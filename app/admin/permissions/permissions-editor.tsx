@@ -4,9 +4,9 @@ import { useState, useMemo } from 'react';
 
 type Role = { id: string; name: string };
 type Form = { id: string; code: string; titleFa: string };
-type Perm = { id: string; roleId: string; formId: string; canRead: boolean; canSubmit: boolean };
+type Perm = { id: string; roleId: string; formId: string; canRead: boolean; canSubmit: boolean; canConfirm: boolean; canFinalConfirm: boolean };
 
-type Cell = { canRead: boolean; canSubmit: boolean };
+type Cell = { canRead: boolean; canSubmit: boolean; canConfirm: boolean; canFinalConfirm: boolean };
 
 export default function PermissionsEditor({
   roles,
@@ -20,8 +20,9 @@ export default function PermissionsEditor({
   // Build initial matrix: key = `${roleId}:${formId}`
   const initial = useMemo(() => {
     const map: Record<string, Cell> = {};
-    for (const r of roles) for (const f of forms) map[`${r.id}:${f.id}`] = { canRead: false, canSubmit: false };
-    for (const p of perms) map[`${p.roleId}:${p.formId}`] = { canRead: !!p.canRead, canSubmit: !!p.canSubmit };
+    for (const r of roles) for (const f of forms) map[`${r.id}:${f.id}`] = { canRead: false, canSubmit: false, canConfirm: false, canFinalConfirm: false };
+    for (const p of perms) map[`${p.roleId}:${p.formId}`] = { canRead: !!p.canRead, canSubmit: !!p.canSubmit,
+                                                              canConfirm: !!p.canConfirm, canFinalConfirm: !!p.canFinalConfirm, };
     return map;
   }, [roles, forms, perms]);
 
@@ -36,14 +37,21 @@ export default function PermissionsEditor({
       const cur = prev[key] || { canRead: false, canSubmit: false };
       const next: Cell = { ...cur };
 
-      if (field === 'canSubmit') {
-        next.canSubmit = !cur.canSubmit;
-        if (next.canSubmit) next.canRead = true;           // ارسال ⇒ مشاهده = true
-      } else {
-        next.canRead = !cur.canRead;
-        if (!next.canRead) next.canSubmit = false;         // برداشتن مشاهده ⇒ ارسال = false
-      }
-
+      // toggle handler
+    if (field === 'canFinalConfirm') {
+      next.canFinalConfirm = !cur.canFinalConfirm;
+      if (next.canFinalConfirm) { next.canConfirm = true; next.canRead = true; }
+    } else if (field === 'canConfirm') {
+      next.canConfirm = !cur.canConfirm;
+      if (next.canConfirm) { next.canRead = true; }
+      else { next.canFinalConfirm = false; }
+    } else if (field === 'canRead') {
+      next.canRead = !cur.canRead;
+      if (!next.canRead) { next.canSubmit = false; next.canConfirm = false; next.canFinalConfirm = false; }
+    } else if (field === 'canSubmit') {
+      next.canSubmit = !cur.canSubmit;
+      if (next.canSubmit) next.canRead = true;
+    }
       return { ...prev, [key]: next };
     });
   };
@@ -77,7 +85,7 @@ export default function PermissionsEditor({
       <table className="w-full text-sm">
         <thead>
           <tr className="text-right text-gray-500">
-            <th className="py-2 w-40">نقش \\ فرم</th>
+            <th className="py-2 w-40">نقش // فرم</th>
             {forms.map(f => (
               <th key={f.id} className="py-2 whitespace-nowrap">{f.titleFa}</th>
             ))}
@@ -108,6 +116,14 @@ export default function PermissionsEditor({
                           onChange={() => onToggle(r.id, f.id, 'canSubmit')}
                         />
                         <span>ارسال</span>
+                      </label>
+                      <label className="inline-flex items-center gap-2">
+                        <input type="checkbox" checked={v.canConfirm} onChange={() => onToggle(r.id, f.id, 'canConfirm')} />
+                        <span>تأیید کننده</span>
+                      </label>
+                      <label className="inline-flex items-center gap-2">
+                        <input type="checkbox" checked={v.canFinalConfirm} onChange={() => onToggle(r.id, f.id, 'canFinalConfirm')} />
+                        <span>تأیید کننده نهایی</span>
                       </label>
                     </div>
                   </td>

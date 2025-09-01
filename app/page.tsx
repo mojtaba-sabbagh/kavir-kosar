@@ -39,6 +39,46 @@ export default async function HomeProtected() {
     where: { userId: user.id, role: { name: 'admin' } },
   })) > 0;
 
+  // Compute pending counts per form code for the current user
+const myPending = await prisma.confirmationTask.findMany({
+  where: { userId: user.id, status: 'pending' },
+  include: { entry: { select: { id: true, formId: true } } },
+});
+
+let counts: Record<string, number> = {};
+if (myPending.length > 0) {
+  const entryIds = myPending.map(t => t.formEntryId);
+
+  const allForThese = await prisma.confirmationTask.findMany({
+    where: { formEntryId: { in: entryIds } },
+    select: { formEntryId: true, isFinal: true, status: true },
+  });
+
+  const entryOkForFinal: Record<string, boolean> = {};
+  for (const eId of new Set(entryIds)) {
+    entryOkForFinal[eId] = allForThese.some(
+      g => g.formEntryId === eId && !g.isFinal && g.status === 'approved'
+    );
+  }
+
+  const countsByFormId: Record<string, number> = {};
+  for (const t of myPending) {
+    if (t.isFinal && !entryOkForFinal[t.formEntryId]) continue; // final not actionable yet
+    countsByFormId[t.entry.formId] = (countsByFormId[t.entry.formId] ?? 0) + 1;
+  }
+
+  const formsMap = Object.fromEntries(
+    (await prisma.form.findMany({
+      where: { id: { in: Object.keys(countsByFormId) } },
+      select: { id: true, code: true },
+    })).map(f => [f.id, f.code] as const)
+  );
+
+  counts = Object.fromEntries(
+    Object.entries(countsByFormId).map(([formId, n]) => [formsMap[formId], n])
+  );
+}
+
   return (
     <div className="space-y-10">
       <div>
@@ -56,7 +96,7 @@ export default async function HomeProtected() {
       <div>
         <h3 className="text-lg font-semibold mb-4">فرم‌های شما</h3>
         {forms.length > 0 ? (
-          <FormsGrid forms={forms} />
+          <FormsGrid forms={forms} pendingCountsByCode={counts} />
         ) : (
           <div className="text-gray-500">
             برای شما فرمی تعریف نشده است.

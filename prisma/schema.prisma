@@ -81,7 +81,10 @@ enum FieldType {
   multiselect
   checkbox
   file
+  entryRef        // single reference to another FormEntry
+  entryRefMulti   // multiple references
 }
+
 
 model FormField {
   id       String    @id @default(uuid())
@@ -104,6 +107,22 @@ enum EntryStatus {
   finalConfirmed
 }
 
+model EntryRelation {
+  id             String   @id @default(uuid())
+  sourceEntryId  String
+  targetEntryId  String
+  relation       String   @default("relatesTo") // optional label/category
+
+  source         FormEntry @relation("SourceEntry", fields: [sourceEntryId], references: [id], onDelete: Cascade)
+  target         FormEntry @relation("TargetEntry", fields: [targetEntryId], references: [id], onDelete: Cascade)
+
+  createdAt      DateTime @default(now())
+
+  @@unique([sourceEntryId, targetEntryId, relation], name: "source_target_relation_unique")
+  @@index([sourceEntryId])
+  @@index([targetEntryId])
+}
+
 model FormEntry {
   id        String   @id @default(uuid())
   formId    String
@@ -124,6 +143,10 @@ model FormEntry {
 
   form  Form               @relation(fields: [formId], references: [id], onDelete: Cascade)
   tasks ConfirmationTask[]
+
+// back-relations:
+  outgoingLinks EntryRelation[] @relation("SourceEntry")
+  incomingLinks EntryRelation[] @relation("TargetEntry")
 
   @@index([formId, createdAt])
   @@index([createdBy, createdAt])
@@ -214,4 +237,22 @@ model RoleReportPermission {
   report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@unique([roleId, reportId], name: "roleId_reportId")
+}
+
+model KardexItem {
+  id            String   @id @default(uuid())
+  code          String   @unique          // SKU / material code
+  nameFa        String
+  category      String?                   // optional: "مواد اولیه" / "محصول"
+  unit          String?                   // e.g. "کیلوگرم"
+  openingQty    Decimal? @db.Decimal(18,3)
+  openingValue  Decimal? @db.Decimal(18,2)
+  currentQty    Decimal? @db.Decimal(18,3)
+  currentValue  Decimal? @db.Decimal(18,2)
+
+  // Optional extra columns from Excel (keep some flexible JSON)
+  extra         Json?
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }

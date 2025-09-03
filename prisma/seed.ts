@@ -151,6 +151,20 @@ const wasteForm = await prisma.form.upsert({
   });
 
   console.log('✅ Seed finished: admin + OPS-WASTE form and fields created.');
+
+// Create Kardex report
+const kardexReport = await prisma.report.upsert({
+  where: { code: 'KARDEX' },
+  update: { titleFa: 'گزارش کاردکس کالا' },
+  create: { code: 'KARDEX', titleFa: 'گزارش کاردکس کالا' },
+});
+
+await prisma.roleReportPermission.upsert({
+  where: { roleId_reportId: { roleId: adminRole.id, reportId: kardexReport.id } },
+  update: { canView: true },
+  create: { roleId: adminRole.id, reportId: kardexReport.id, canView: true },
+});
+
 }
 
 main()

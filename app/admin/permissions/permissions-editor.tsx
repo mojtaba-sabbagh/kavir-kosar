@@ -81,25 +81,25 @@ export default function PermissionsEditor({
   };
 
   return (
-    <div className="overflow-x-auto">
+   <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="text-right text-gray-500">
-            <th className="py-2 w-40">نقش // فرم</th>
+          <tr className="text-center text-gray-500">
+            <th className="p-2 w-40">نقش // فرم</th>
             {forms.map(f => (
-              <th key={f.id} className="py-2 whitespace-nowrap">{f.titleFa}</th>
+              <th key={f.id} className="p-2 whitespace-nowrap border-r border-gray-300">{f.titleFa}</th>
             ))}
           </tr>
         </thead>
         <tbody>
           {roles.map(r => (
             <tr key={r.id} className="border-t">
-              <td className="py-2 font-medium">{r.name}</td>
+              <td className="p-2 font-medium">{r.name}</td>
               {forms.map(f => {
                 const k = `${r.id}:${f.id}`;
                 const v = matrix[k] || { canRead: false, canSubmit: false };
                 return (
-                  <td key={k} className="py-2">
+                  <td key={k} className="p-2 border-r border-gray-300">
                     <div className="flex items-center gap-4">
                       <label className="inline-flex items-center gap-2">
                         <input

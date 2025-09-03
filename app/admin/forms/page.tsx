@@ -1,53 +1,51 @@
 import { prisma } from '@/lib/db';
-import FormsCreateForm from './forms-create-form';
-import FormEditDialog from './form-edit-dialog';
-import DeleteFormForm from './delete-form-form';
+import { requireAdminOrRedirect } from '@/lib/rbac';
+import Link from 'next/link';
+import DeleteFormButton from '@/components/admin/DeleteFormButton';
 
-export default async function FormsPage() {
-  const forms = await prisma.form.findMany({ orderBy: { sortOrder: 'asc' } });
+export default async function AdminFormsList() {
+  await requireAdminOrRedirect();
+
+  const forms = await prisma.form.findMany({
+    orderBy: { sortOrder: 'asc' },
+    select: { id: true, code: true, titleFa: true, isActive: true, version: true },
+  });
 
   return (
     <div className="space-y-6">
-      <div className="rounded-2xl border bg-white p-6">
-        <h2 className="text-lg font-bold mb-4">ایجاد فرم جدید</h2>
-        <FormsCreateForm />
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-bold">فرم‌ها</h1>
+        <Link href="/admin/forms/new" className="rounded-md bg-blue-600 text-white px-4 py-2 hover:bg-blue-700">فرم جدید</Link>
       </div>
-
-      <div className="rounded-2xl border bg-white p-6">
-        <h2 className="text-lg font-bold mb-4">فهرست فرم‌ها</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-right text-gray-500">
-                <th className="py-2">کد</th>
-                <th className="py-2">عنوان</th>
-                <th className="py-2">ترتیب</th>
-                <th className="py-2">فعال</th>
-                <th className="py-2">ویرایش</th>
-                <th className="py-2">حذف</th>
+      <div className="rounded-xl border bg-white">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-gray-50">
+              <th className="p-3 text-right">کد</th>
+              <th className="p-3 text-right">عنوان</th>
+              <th className="p-3 text-right">نسخه</th>
+              <th className="p-3 text-right">وضعیت</th>
+              <th className="p-3"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {forms.map(f => (
+              <tr key={f.id} className="border-t">
+                <td className="p-3 font-mono">{f.code}</td>
+                <td className="p-3">{f.titleFa}</td>
+                <td className="p-3">{f.version}</td>
+                <td className="p-3">{f.isActive ? 'فعال' : 'غیرفعال'}</td>
+                <td className="p-3 text-left flex gap-2 justify-end">
+                  <Link href={`/admin/forms/${f.id}/builder`} className="rounded-md border px-3 py-1 hover:bg-gray-50">ویرایش</Link>
+                  <DeleteFormButton id={f.id} />
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {forms.map((f) => (
-                <tr key={f.id} className="border-t">
-                  <td className="py-2">{f.code}</td>
-                  <td className="py-2">{f.titleFa}</td>
-                  <td className="py-2">{f.sortOrder}</td>
-                  <td className="py-2">{f.isActive ? 'بله' : 'خیر'}</td>
-                  <td className="py-2">
-                    <FormEditDialog form={f as any} />
-                  </td>
-                  <td className="py-2">
-                    <DeleteFormForm formId={f.id} />
-                  </td>
-                </tr>
-              ))}
-              {forms.length === 0 && (
-                <tr><td className="py-4 text-gray-500" colSpan={6}>فرمی ثبت نشده است.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+            ))}
+            {forms.length === 0 && (
+              <tr><td className="p-6 text-center text-gray-500" colSpan={5}>فرمی وجود ندارد</td></tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );

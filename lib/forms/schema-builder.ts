@@ -34,14 +34,33 @@ export function buildZodSchema(fields: Pick<FormField,
         break;
       }
       case 'number': {
-        // Coerce strings like "12.34" to numbers
-        let n = z.preprocess(v => (v === '' || v == null ? undefined : typeof v === 'string' ? Number(v) : v), z.number());
-        if (cfg.decimals !== true) n = n.int();
-        if (typeof cfg.min === 'number') n = n.min(cfg.min);
-        if (typeof cfg.max === 'number') n = n.max(cfg.max);
-        shape[f.key] = f.required ? n : n.optional();
+        // Build constraints on a plain ZodNumber first
+        let base = z.number();
+
+        if (cfg && cfg.decimals !== true) {
+            base = base.int();
+        }
+        if (cfg && typeof cfg.min === 'number') {
+            base = base.min(cfg.min);
+        }
+        if (cfg && typeof cfg.max === 'number') {
+            base = base.max(cfg.max);
+        }
+
+        // Then wrap with preprocess to handle "", null, etc. and string → number
+        const coerced = z.preprocess(
+            (v) => {
+            if (v === '' || v == null) return undefined; // lets optional pass
+            if (typeof v === 'string') return Number(v);
+            return v;
+            },
+            base
+        );
+
+        shape[f.key] = f.required ? coerced : coerced.optional();
         break;
-      }
+        }
+
       case 'date': {
         // Keep as string (yyyy-mm-dd). Validate basic length.
         const d = z.string().min(4).max(32);
@@ -79,6 +98,22 @@ export function buildZodSchema(fields: Pick<FormField,
         // For now accept string storage key(s); real upload handled elsewhere
         const file = z.string().min(1);
         shape[f.key] = f.required ? file : file.optional();
+        break;
+      }
+      case 'entryRef': {
+        const r = uuid; // store the selected entryId as a UUID
+        shape[f.key] = f.required ? r : r.optional();
+        break;
+      }
+      case 'entryRefMulti': {
+        const arr = z.array(uuid).nonempty().catch([]); // accept [] for optional
+        shape[f.key] = f.required ? arr : arr.optional().default([]);
+        break;
+      }
+      case 'phone': {
+        // Basic phone validation (any +digits, 3-32 chars)
+        const p = z.string().min(3).max(32).regex(/^\+?[0-9\s\-()]+$/);
+        shape[f.key] = f.required ? p : p.optional().transform(v => v ?? '');
         break;
       }
       default: {

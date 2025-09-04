@@ -2,28 +2,27 @@
 import Link from 'next/link';
 import { useState } from 'react';
 
-function FinalConfirmButton({ entryId }:{ entryId: string }) {
+function ConfirmButton({ entryId }:{ entryId: string }) {
   const [busy, setBusy] = useState(false);
   const [ok, setOk] = useState(false);
   const [err, setErr] = useState<string|null>(null);
-
   const go = async () => {
     setBusy(true); setErr(null);
-    const res = await fetch(`/api/forms/${entryId}/confirm`, { method:'POST' });
+    const res = await fetch(`/api/forms/${entryId}/confirm`, { method: 'POST' });
     const j = await res.json().catch(()=>({}));
     setBusy(false);
-    if (res.ok) setOk(true);
-    else setErr(j.message || 'خطا در تایید');
+    if (res.ok) setOk(true); else setErr(j.message || 'خطا در تایید');
   };
-
   return (
-    <div className="flex items-center gap-2">
-      <button onClick={go} disabled={busy||ok} className="rounded-md bg-green-600 text-white px-3 py-1 disabled:opacity-50">
-        {ok ? 'تایید شد' : (busy ? 'در حال تایید…' : 'تایید')}
-      </button>
-      {err && <span className="text-xs text-red-600">{err}</span>}
-    </div>
+    <button onClick={go} disabled={busy||ok} className="rounded-md bg-blue-600 text-white px-3 py-1 disabled:opacity-50">
+      {ok ? 'تایید شد' : (busy ? '...' : 'تایید')}
+    </button>
   );
+}
+
+function FinalConfirmButton({ entryId }:{ entryId: string }) {
+  // same code/style; you can keep a single component now since the API handles both
+  return <ConfirmButton entryId={entryId} />;
 }
 
 export default function ConfirmationsClient({ items }:{
@@ -49,7 +48,10 @@ export default function ConfirmationsClient({ items }:{
               <td className="p-2">
                 <div className="flex items-center gap-3">
                   <Link href={`/entries/${it.entryId}`} className="rounded-md border px-3 py-1 hover:bg-gray-50">مشاهده</Link>
-                  <FinalConfirmButton entryId={it.entryId} />
+                  {it.kind === 'final'
+                    ? <FinalConfirmButton entryId={it.entryId} />
+                    : <ConfirmButton entryId={it.entryId} />
+                    }
                 </div>
               </td>
             </tr>

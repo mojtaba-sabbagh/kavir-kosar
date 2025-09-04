@@ -26,6 +26,8 @@ model User {
   formConfirmations      FormConfirmer[] // users assigned as regular confirmers
   formFinalConfirmations FormFinalConfirmer[] // users assigned as final confirmer
   confirmationTasks      ConfirmationTask[] // per-entry tasks for this user
+  finalConfirmedEntries FormEntry[] @relation("FinalConfirmedBy")
+
 }
 
 model Role {
@@ -141,6 +143,8 @@ model FormEntry {
   // workflow timestamps (optional convenience)
   firstConfirmedAt DateTime?
   finalConfirmedAt DateTime?
+  finalConfirmedById String?
+  finalConfirmedBy   User?      @relation("FinalConfirmedBy", fields: [finalConfirmedById], references: [id])
   status           EntryStatus @default(submitted)
 
   form  Form               @relation(fields: [formId], references: [id], onDelete: Cascade)
@@ -203,19 +207,19 @@ enum ConfirmationStatus {
 }
 
 model ConfirmationTask {
-  id          String             @id @default(uuid())
+  id          String    @id @default(uuid())
   formEntryId String
   userId      String
-  isFinal     Boolean            @default(false)
-  status      ConfirmationStatus @default(pending)
+  isFinal     Boolean
+  status      ConfirmationStatus? // if you have it
   signedAt    DateTime?
 
   entry FormEntry @relation(fields: [formEntryId], references: [id], onDelete: Cascade)
   user  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId, isFinal, status])
-  @@index([formEntryId, isFinal, status])
+  @@unique([formEntryId, userId, isFinal])
 }
+
 
 model Report {
   id        String   @id @default(uuid())

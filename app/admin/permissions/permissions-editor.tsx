@@ -1,10 +1,13 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 type Role = { id: string; name: string };
 type Form = { id: string; code: string; titleFa: string };
-type Perm = { id: string; roleId: string; formId: string; canRead: boolean; canSubmit: boolean; canConfirm: boolean; canFinalConfirm: boolean };
+type Perm = {
+  id: string; roleId: string; formId: string;
+  canRead: boolean; canSubmit: boolean; canConfirm: boolean; canFinalConfirm: boolean;
+};
 
 type Cell = { canRead: boolean; canSubmit: boolean; canConfirm: boolean; canFinalConfirm: boolean };
 
@@ -20,9 +23,19 @@ export default function PermissionsEditor({
   // Build initial matrix: key = `${roleId}:${formId}`
   const initial = useMemo(() => {
     const map: Record<string, Cell> = {};
-    for (const r of roles) for (const f of forms) map[`${r.id}:${f.id}`] = { canRead: false, canSubmit: false, canConfirm: false, canFinalConfirm: false };
-    for (const p of perms) map[`${p.roleId}:${p.formId}`] = { canRead: !!p.canRead, canSubmit: !!p.canSubmit,
-                                                              canConfirm: !!p.canConfirm, canFinalConfirm: !!p.canFinalConfirm, };
+    for (const r of roles) {
+      for (const f of forms) {
+        map[`${r.id}:${f.id}`] = { canRead: false, canSubmit: false, canConfirm: false, canFinalConfirm: false };
+      }
+    }
+    for (const p of perms) {
+      map[`${p.roleId}:${p.formId}`] = {
+        canRead: !!p.canRead,
+        canSubmit: !!p.canSubmit,
+        canConfirm: !!p.canConfirm,
+        canFinalConfirm: !!p.canFinalConfirm,
+      };
+    }
     return map;
   }, [roles, forms, perms]);
 
@@ -30,40 +43,65 @@ export default function PermissionsEditor({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState<null | boolean>(null);
 
-  const onToggle = (roleId: string, formId: string, field: 'canRead' | 'canSubmit') => {
+  // If props change (e.g., after server refresh), sync state
+  useEffect(() => setMatrix(initial), [initial]);
+
+  // Toggle with full dependency rules
+  const onToggle = (
+    roleId: string,
+    formId: string,
+    field: 'canRead' | 'canSubmit' | 'canConfirm' | 'canFinalConfirm'
+  ) => {
     const key = `${roleId}:${formId}`;
     setSaved(null);
     setMatrix(prev => {
-      const cur = prev[key] || { canRead: false, canSubmit: false };
+      const cur: Cell = prev[key] ?? { canRead: false, canSubmit: false, canConfirm: false, canFinalConfirm: false };
       const next: Cell = { ...cur };
 
-      // toggle handler
-    if (field === 'canFinalConfirm') {
-      next.canFinalConfirm = !cur.canFinalConfirm;
-      if (next.canFinalConfirm) { next.canConfirm = true; next.canRead = true; }
-    } else if (field === 'canConfirm') {
-      next.canConfirm = !cur.canConfirm;
-      if (next.canConfirm) { next.canRead = true; }
-      else { next.canFinalConfirm = false; }
-    } else if (field === 'canRead') {
-      next.canRead = !cur.canRead;
-      if (!next.canRead) { next.canSubmit = false; next.canConfirm = false; next.canFinalConfirm = false; }
-    } else if (field === 'canSubmit') {
-      next.canSubmit = !cur.canSubmit;
-      if (next.canSubmit) next.canRead = true;
-    }
+      if (field === 'canFinalConfirm') {
+        next.canFinalConfirm = !cur.canFinalConfirm;
+        if (next.canFinalConfirm) {
+          next.canConfirm = true;
+          next.canRead = true;
+        }
+      } else if (field === 'canConfirm') {
+        next.canConfirm = !cur.canConfirm;
+        if (next.canConfirm) {
+          next.canRead = true;
+        } else {
+          // dropping confirm must also drop final
+          next.canFinalConfirm = false;
+        }
+      } else if (field === 'canSubmit') {
+        next.canSubmit = !cur.canSubmit;
+        if (next.canSubmit) next.canRead = true;
+      } else if (field === 'canRead') {
+        next.canRead = !cur.canRead;
+        if (!next.canRead) {
+          // removing read clears all others
+          next.canSubmit = false;
+          next.canConfirm = false;
+          next.canFinalConfirm = false;
+        }
+      }
+
       return { ...prev, [key]: next };
     });
   };
 
   const save = async () => {
-    setSaving(true); setSaved(null);
-    // Normalize before sending (extra safety on client)
+    setSaving(true);
+    setSaved(null);
+
+    // Normalize before sending (server will also normalize)
     const normalized: Record<string, Cell> = {};
     for (const [k, v] of Object.entries(matrix)) {
+      const read = v.canFinalConfirm || v.canConfirm || v.canSubmit || v.canRead;
       normalized[k] = {
-        canRead: v.canSubmit ? true : !!v.canRead,
-        canSubmit: v.canRead ? !!v.canSubmit : false,
+        canRead: !!read,
+        canSubmit: read ? !!v.canSubmit : false,
+        canConfirm: read ? !!(v.canFinalConfirm || v.canConfirm) : false,
+        canFinalConfirm: read ? !!v.canFinalConfirm : false,
       };
     }
 
@@ -72,34 +110,40 @@ export default function PermissionsEditor({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ matrix: normalized }),
     });
+
     setSaving(false);
     setSaved(res.ok);
     if (!res.ok) {
-      try { console.error(await res.json()); } catch {}
-      alert('ذخیره مجوزها ناموفق بود');
+      try {
+        const j = await res.json();
+        console.error('Save error:', j);
+        alert(j?.message || 'ذخیره مجوزها ناموفق بود');
+      } catch {
+        alert('ذخیره مجوزها ناموفق بود');
+      }
     }
   };
 
   return (
-   <div className="overflow-x-auto">
+    <div className="overflow-x-auto" dir="rtl">
       <table className="w-full text-sm">
         <thead>
           <tr className="text-center text-gray-500">
-            <th className="p-2 w-40">نقش // فرم</th>
+            <th className="p-2 w-40">نقش / فرم</th>
             {forms.map(f => (
-              <th key={f.id} className="p-2 whitespace-nowrap border-r border-gray-300">{f.titleFa}</th>
+              <th key={f.id} className="p-2 whitespace-nowrap border-r border-gray-200">{f.titleFa}</th>
             ))}
           </tr>
         </thead>
         <tbody>
           {roles.map(r => (
             <tr key={r.id} className="border-t">
-              <td className="p-2 font-medium">{r.name}</td>
+              <td className="p-2 font-medium whitespace-nowrap">{r.name}</td>
               {forms.map(f => {
                 const k = `${r.id}:${f.id}`;
-                const v = matrix[k] || { canRead: false, canSubmit: false };
+                const v = matrix[k] ?? { canRead: false, canSubmit: false, canConfirm: false, canFinalConfirm: false };
                 return (
-                  <td key={k} className="p-2 border-r border-gray-300">
+                  <td key={k} className="p-2 border-r border-gray-200">
                     <div className="flex items-center gap-4">
                       <label className="inline-flex items-center gap-2">
                         <input
@@ -109,6 +153,7 @@ export default function PermissionsEditor({
                         />
                         <span>مشاهده</span>
                       </label>
+
                       <label className="inline-flex items-center gap-2">
                         <input
                           type="checkbox"
@@ -117,12 +162,22 @@ export default function PermissionsEditor({
                         />
                         <span>ارسال</span>
                       </label>
+
                       <label className="inline-flex items-center gap-2">
-                        <input type="checkbox" checked={v.canConfirm} onChange={() => onToggle(r.id, f.id, 'canConfirm')} />
+                        <input
+                          type="checkbox"
+                          checked={v.canConfirm}
+                          onChange={() => onToggle(r.id, f.id, 'canConfirm')}
+                        />
                         <span>تأیید کننده</span>
                       </label>
+
                       <label className="inline-flex items-center gap-2">
-                        <input type="checkbox" checked={v.canFinalConfirm} onChange={() => onToggle(r.id, f.id, 'canFinalConfirm')} />
+                        <input
+                          type="checkbox"
+                          checked={v.canFinalConfirm}
+                          onChange={() => onToggle(r.id, f.id, 'canFinalConfirm')}
+                        />
                         <span>تأیید کننده نهایی</span>
                       </label>
                     </div>

@@ -69,6 +69,8 @@ model Form {
 
   confirmers     FormConfirmer[]
   finalConfirmer FormFinalConfirmer?
+  kardexRule     FormKardexRule? // ⬅️ back-relation (one rule per form)
+  kardexTxns     KardexTxn[] // ⬅️ back-relation for Txns referencing this form
 }
 
 enum FieldType {
@@ -81,10 +83,10 @@ enum FieldType {
   multiselect
   checkbox
   file
-  entryRef        // single reference to another FormEntry
-  entryRefMulti   // multiple references
+  entryRef // single reference to another FormEntry
+  entryRefMulti // multiple references
+  kardexItem
 }
-
 
 model FormField {
   id       String    @id @default(uuid())
@@ -108,15 +110,15 @@ enum EntryStatus {
 }
 
 model EntryRelation {
-  id             String   @id @default(uuid())
-  sourceEntryId  String
-  targetEntryId  String
-  relation       String   @default("relatesTo") // optional label/category
+  id            String @id @default(uuid())
+  sourceEntryId String
+  targetEntryId String
+  relation      String @default("relatesTo") // optional label/category
 
-  source         FormEntry @relation("SourceEntry", fields: [sourceEntryId], references: [id], onDelete: Cascade)
-  target         FormEntry @relation("TargetEntry", fields: [targetEntryId], references: [id], onDelete: Cascade)
+  source FormEntry @relation("SourceEntry", fields: [sourceEntryId], references: [id], onDelete: Cascade)
+  target FormEntry @relation("TargetEntry", fields: [targetEntryId], references: [id], onDelete: Cascade)
 
-  createdAt      DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@unique([sourceEntryId, targetEntryId, relation], name: "source_target_relation_unique")
   @@index([sourceEntryId])
@@ -144,9 +146,12 @@ model FormEntry {
   form  Form               @relation(fields: [formId], references: [id], onDelete: Cascade)
   tasks ConfirmationTask[]
 
-// back-relations:
+  // back-relations:
   outgoingLinks EntryRelation[] @relation("SourceEntry")
   incomingLinks EntryRelation[] @relation("TargetEntry")
+
+  kardexApplied Boolean     @default(false)
+  kardexTxns    KardexTxn[]
 
   @@index([formId, createdAt])
   @@index([createdBy, createdAt])
@@ -240,19 +245,66 @@ model RoleReportPermission {
 }
 
 model KardexItem {
-  id            String   @id @default(uuid())
-  code          String   @unique          // SKU / material code
-  nameFa        String
-  category      String?                   // optional: "مواد اولیه" / "محصول"
-  unit          String?                   // e.g. "کیلوگرم"
-  openingQty    Decimal? @db.Decimal(18,3)
-  openingValue  Decimal? @db.Decimal(18,2)
-  currentQty    Decimal? @db.Decimal(18,3)
-  currentValue  Decimal? @db.Decimal(18,2)
+  id           String   @id @default(uuid())
+  code         String   @unique
+  nameFa       String
+  category     String?
+  unit         String?
+  openingQty   Decimal? @db.Decimal(18, 3)
+  openingValue Decimal? @db.Decimal(18, 2)
+  currentQty   Decimal? @db.Decimal(18, 3)
+  currentValue Decimal? @db.Decimal(18, 2)
+  extra        Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  // Optional extra columns from Excel (keep some flexible JSON)
-  extra         Json?
+  // add:
+  txns KardexTxn[] // ⬅️ back-relation for movements
+}
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+// How a specific form maps its fields to Kardex
+enum KardexApplyMode {
+  delta // add/subtract from currentQty
+  set // set currentQty to provided value
+}
+
+model FormKardexRule {
+  id     String @id @default(uuid())
+  formId String @unique
+  form   Form   @relation(fields: [formId], references: [id], onDelete: Cascade)
+
+  codeKey         String
+  nameKey         String?
+  qtyKey          String
+  mode            KardexApplyMode @default(delta)
+  allowNegative   Boolean         @default(false)
+  createIfMissing Boolean         @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Immutable movement log (audit)
+model KardexTxn {
+  id     String     @id @default(uuid())
+  itemId String
+  item   KardexItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  entryId String
+  entry   FormEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  formId   String
+  form     Form   @relation(fields: [formId], references: [id], onDelete: NoAction)
+  formCode String
+
+  userId   String // who caused the apply (usually final confirmer)
+  qtyDelta Decimal  @db.Decimal(18, 3)
+  prevQty  Decimal? @db.Decimal(18, 3)
+  newQty   Decimal? @db.Decimal(18, 3)
+  note     String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([entryId]) // idempotency: apply once per entry
+  @@index([itemId])
 }

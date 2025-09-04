@@ -25,6 +25,7 @@ const FIELD_TYPES = [
   { v: 'file', t: 'فایل' },
   { v: 'entryRef', t: 'ارجاع به فرم' },
   { v: 'entryRefMulti', t: 'ارجاع‌های متعدد' },
+  { v: 'kardexItem', t: 'کاردکس کالا' },
 ];
 
 export default function FormBuilder({ form: initialForm, fields: initialFields }:{ form: FormInfo; fields: Field[] }) {

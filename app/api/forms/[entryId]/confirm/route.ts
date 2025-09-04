@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/auth';
+import { applyKardexForEntry } from '@/lib/kardex/apply';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -67,6 +68,13 @@ export async function POST(
           where: { id: entryId },
           data: { finalConfirmedAt: new Date(), status: 'finalConfirmed' },
         });
+        
+        const result = await applyKardexForEntry(entryId, user.id);
+        await prisma.confirmationTask.updateMany({
+            where: { userId: user.id, formEntryId: entryId, isDone: false },
+            data: { isDone: true },
+        });
+        
         return NextResponse.json({ ok: true, type: 'final' });
       }
     });

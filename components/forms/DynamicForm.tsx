@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import type { Form, FormField, FieldType } from '@prisma/client';
 import { isLtrField, optionLabel } from '@/lib/forms/field-utils';
-
+import KardexPicker from './KardexPicker';
 type Props = {
   form: Pick<Form, 'code'|'titleFa'>;
   fields: Pick<FormField, 'key'|'labelFa'|'type'|'required'|'config'|'order'>[];
@@ -184,7 +184,7 @@ export default function DynamicForm({ form, fields }: Props) {
                 />
               )}
 
-              // entryRef
+              {/* entryRef */}
               {f.type === 'entryRef' && (
                 <EntryPicker
                   value={values[f.key] as string | undefined}
@@ -193,7 +193,7 @@ export default function DynamicForm({ form, fields }: Props) {
                 />
               )}
 
-              // entryRefMulti
+              {/* entryRefMulti */}
               {f.type === 'entryRefMulti' && (
                 <EntryMultiPicker
                   value={(values[f.key] as string[] | undefined) ?? []}
@@ -201,13 +201,24 @@ export default function DynamicForm({ form, fields }: Props) {
                   allowedFormCodes={(cfg?.allowedFormCodes as string[] | undefined)}
                 />
               )}
+
+              {/* kardexItem */}
+              {f.type === 'kardexItem' && (
+                <KardexPicker
+                  label={f.labelFa}
+                  value={values[f.key] || ''}
+                  onSelect={(val) => {
+                    set(f.key, val.code);
+                    if (cfg?.nameKey) set(cfg.nameKey, val.nameFa);
+                  }}
+                />
+              )}
             </div>
           );
         })}
-
+        
         {err && <div className="text-red-600 text-sm">{err}</div>}
         {msg && <div className="text-green-600 text-sm">{msg}</div>}
-
         <button
           className="w-full rounded-md bg-blue-600 text-white py-2 disabled:opacity-50"
           disabled={loading}

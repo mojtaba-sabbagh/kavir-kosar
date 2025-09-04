@@ -5,6 +5,7 @@ import { prisma } from '@/lib/db';
 import Link from 'next/link';
 import FormsGrid from '@/components/FormsGrid';
 import ReportsSection from '@/components/dashboard/ReportsSection';
+import PendingSection from '@/components/dashboard/PendingSection';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -64,6 +65,7 @@ export default async function HomeProtected() {
           </div>
         )}
       </div>
+      <PendingSection />
       {/* Forms (blue for Send, gray for Read-only) */}
       <div>
         <h3 className="text-lg font-semibold mb-4">فرم‌های شما</h3>

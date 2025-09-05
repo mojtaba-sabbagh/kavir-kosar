@@ -24,7 +24,7 @@ export default async function HomeProtected() {
       titleFa: true,
       rolePermissions: {
         where: { role: { users: { some: { userId: user.id } } } },
-        select: { canRead: true, canSubmit: true },
+        select: { canSubmit: true },
       },
     },
   });
@@ -32,10 +32,9 @@ export default async function HomeProtected() {
   const forms = rawForms
     .map(f => {
       const canSubmit = f.rolePermissions.some(p => p.canSubmit);
-      const canRead = canSubmit || f.rolePermissions.some(p => p.canRead);
-      return { id: f.id, code: f.code, titleFa: f.titleFa, canRead, canSubmit };
+      return { id: f.id, code: f.code, titleFa: f.titleFa, canSubmit };
     })
-    .filter(f => f.canRead || f.canSubmit); // only show if at least read
+    .filter(f => f.canSubmit); // only show if at least submit
 
 
   // 4) Is admin? (quick link)
@@ -48,8 +47,6 @@ export default async function HomeProtected() {
     <div className="space-y-10">
       {/* Greeting (no borders/boxes) */}
       <div>
-        <h2 className="text-2xl font-bold">خوش آمدید{user.name ? `، ${user.name}` : ''}</h2>
-        <p className="text-gray-600 mt-2">فرم‌ها و گزارش‌های مجاز برای شما در زیر نمایش داده شده‌اند.</p>
 
         {isAdmin && (
           <div className="mt-4">

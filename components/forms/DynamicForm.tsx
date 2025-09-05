@@ -4,6 +4,9 @@ import { useState } from 'react';
 import type { Form, FormField, FieldType } from '@prisma/client';
 import { isLtrField, optionLabel } from '@/lib/forms/field-utils';
 import KardexPicker from './KardexPicker';
+import JDatePicker from '@/components/ui/JDatePicker';
+import JDateTimePicker from '@/components/ui/JDateTimePicker';
+
 type Props = {
   form: Pick<Form, 'code'|'titleFa'>;
   fields: Pick<FormField, 'key'|'labelFa'|'type'|'required'|'config'|'order'>[];
@@ -101,25 +104,18 @@ export default function DynamicForm({ form, fields }: Props) {
               )}
 
               {f.type === 'date' && (
-                <input
-                  type="date"
-                  className={common}
-                  dir="ltr"
-                  value={values[f.key] ?? ''}
-                  onChange={e => set(f.key, e.target.value)}
+                <JDatePicker
+                  value={(values[f.key] as string | undefined) ?? null}
+                  onChange={(iso) => set(f.key, iso)}
                 />
               )}
 
               {f.type === 'datetime' && (
-                <input
-                  type="datetime-local"
-                  className={common}
-                  dir="ltr"
-                  value={values[f.key] ?? ''}
-                  onChange={e => set(f.key, e.target.value)}
+                <JDateTimePicker
+                  value={(values[f.key] as string | undefined) ?? null}
+                  onChange={(iso) => set(f.key, iso)}
                 />
               )}
-
               {f.type === 'checkbox' && (
                 <label className="inline-flex items-center gap-2">
                   <input

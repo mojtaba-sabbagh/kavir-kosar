@@ -16,7 +16,24 @@ export default function KardexReportClient() {
     setLoading(false);
   }
 
-  useEffect(() => { load(''); }, []);
+  useEffect(() => {
+    ctrl.current?.abort();
+    const ac = new AbortController();
+    ctrl.current = ac;
+
+    setLoading(true);
+    const url = q.trim()
+      ? `/api/kardex/search?q=${encodeURIComponent(q)}&limit=50`
+      : `/api/kardex/search?limit=100`; // 👈 fetch all when empty
+
+    fetch(url, { signal: ac.signal })
+      .then(r => r.json())
+      .then(j => setItems(j.items ?? []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+
+    return () => ac.abort();
+  }, [q]);
 
   return (
     <div className="rounded-xl border bg-white p-4">

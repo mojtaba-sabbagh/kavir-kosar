@@ -1,34 +1,25 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { normalizeFa } from '@/lib/fa-normalize';
-
-export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const raw = url.searchParams.get('q') ?? '';
-  const q = raw.trim();
-  if (!q) return NextResponse.json({ items: [] });
+  const { searchParams } = new URL(req.url);
+  const q = searchParams.get('q')?.trim();
+  const limit = Number(searchParams.get('limit') ?? 100);
 
-  const nq = normalizeFa(q);
+  const where = q
+    ? {
+        OR: [
+          { nameFa: { contains: q, mode: 'insensitive' } },
+          { code: { contains: q, mode: 'insensitive' } },
+        ],
+      }
+    : {}; // 👈 if no query, return all
 
-  // Build OR filters using both raw & normalized, for name and code.
-  const orName = [
-    { nameFa: { contains: q,  mode: 'insensitive' as const } },
-    { nameFa: { contains: nq, mode: 'insensitive' as const } },
-  ];
-
-  const orCode = [
-    { code: { contains: q,  mode: 'insensitive' as const } },
-    { code: { contains: nq, mode: 'insensitive' as const } },
-  ];
-
-  const rows = await prisma.kardexItem.findMany({
-    where: { OR: [...orName, ...orCode] },
-    orderBy: [{ nameFa: 'asc' }],
-    take: 20,
-    select: { id: true, code: true, nameFa: true, unit: true },
+  const items = await prisma.kardexItem.findMany({
+    where,
+    orderBy: { nameFa: 'asc' },
+    take: limit,
   });
 
-  return NextResponse.json({ items: rows });
+  return NextResponse.json({ items });
 }

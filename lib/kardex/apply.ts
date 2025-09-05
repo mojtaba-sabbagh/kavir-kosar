@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db';
+import { Prisma } from '@prisma/client';
 
 type Op = 'deltaPlus' | 'deltaMinus' | 'set';
 type ApplyOn = 'final' | 'anyConfirm';
@@ -74,84 +75,61 @@ export async function applyKardexForEntry(entryId: string, actorUserId: string) 
   const res = await prisma.$transaction(async (tx) => {
     let appliedCount = 0;
 
-    for (const m of mappings) {
-      const code = payload[m.itemCodeKey];
-      const rawAmt = payload[m.amountKey];
+  for (const m of mappings) {
+    const code = payload[m.itemCodeKey];
+    const rawAmt = payload[m.amountKey];
 
-      console.log('[kardex] read', {
-        itemCodeKey: m.itemCodeKey,
-        code,
-        amountKey: m.amountKey,
-        rawAmt,
-      });
+    if (!code || rawAmt == null || rawAmt === '') { /* skip */ continue; }
 
-      if (!code || rawAmt == null || rawAmt === '') {
-        console.log('[kardex] skip: missing code or amount');
-        continue;
-      }
+    // 1) Coerce amount to a real number
+    const amt = typeof rawAmt === 'number'
+      ? rawAmt
+      : Number(String(rawAmt).replace(',', '.'));
+    if (!Number.isFinite(amt)) { /* skip */ continue; }
 
-      // Coerce to number safely
-      const amt = typeof rawAmt === 'number'
-        ? rawAmt
-        : Number(String(rawAmt).replace(',', '.'));
-      if (!Number.isFinite(amt)) {
-        console.log('[kardex] skip: non-numeric amount', rawAmt);
-        continue;
-      }
+    const item = await tx.kardexItem.findUnique({ where: { code } });
+    if (!item) { /* skip */ continue; }
 
-      // Find Kardex item by code
-      const item = await tx.kardexItem.findUnique({ where: { code } });
-      if (!item) {
-        console.log('[kardex] item not found', code);
-        continue;
-      }
+    // 2) Coerce currentQty to a number (Decimal | string | number -> number)
+    const curQty =
+      typeof (item as any).currentQty === 'number'
+        ? (item as any).currentQty
+        : Number(String((item as any).currentQty ?? '0'));
 
-      // Compute delta & new qty
-      let delta = 0;
-      let newQty = item.currentQty ?? 0;
+    let delta = 0;
+    let newQty = curQty;
 
-      if (m.op === 'deltaPlus') {
-        delta = +amt;
-        newQty = newQty + delta;
-      } else if (m.op === 'deltaMinus') {
-        delta = -Math.abs(amt);
-        newQty = newQty + delta;
-      } else { // 'set'
-        delta = (+amt) - newQty;
-        newQty = +amt;
-      }
+    if (m.op === 'deltaPlus')      { delta = +amt;                newQty = curQty + delta; }
+    else if (m.op === 'deltaMinus'){ delta = -Math.abs(amt);      newQty = curQty + delta; }
+    else                           { delta = (+amt) - curQty;     newQty = +amt; }
 
-      console.log('[kardex] apply', { code, op: m.op, amt, delta, from: item.currentQty, to: newQty });
+    // 3) Create txn with Decimal values
+    await tx.kardexTxn.create({
+      data: {
+        itemId: item.id,
+        formId: entry.formId,
+        entryId: entry.id,
+        formCode: entry.form.code,
+        op: m.op,
+        amount: new Prisma.Decimal(amt),
+        delta:  new Prisma.Decimal(delta),
+        appliedById: actorUserId,
+      },
+    });
 
-      // Create txn row
-      await tx.kardexTxn.create({
-        data: {
-          itemId: item.id,
-          formId: entry.formId,
-          entryId: entry.id,
-          formCode: entry.form.code,
-          op: m.op,
-          amount: amt,
-          delta: delta,
-          appliedById: actorUserId,
-        },
-      });
-
-      // Update item qty
-      await tx.kardexItem.update({
-        where: { id: item.id },
-        data: { currentQty: newQty },
-      });
-
-      appliedCount++;
-    }
-
-    if (appliedCount > 0) {
-      await tx.formEntry.update({
-        where: { id: entry.id },
-        data: { kardexApplied: true },
-      });
-    }
+    // 4) Update KardexItem.currentQty as Decimal
+    await tx.kardexItem.update({
+      where: { id: item.id },
+      data: { currentQty: new Prisma.Decimal(newQty) },
+    });
+        appliedCount++;
+  }
+  if (appliedCount > 0) {
+    await tx.formEntry.update({
+      where: { id: entry.id },
+      data: { kardexApplied: true },
+    });
+  }
 
     return { applied: appliedCount > 0, appliedCount };
   });

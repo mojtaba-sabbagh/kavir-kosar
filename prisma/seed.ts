@@ -142,11 +142,11 @@ const wasteForm = await prisma.form.upsert({
   await prisma.roleFormPermission.upsert({
     where: { roleId_formId: { roleId: adminRole.id, formId: wasteForm.id } },
     update: {
-      canRead: true, canSubmit: true, canConfirm: true, canFinalConfirm: true,
+      canRead: true, canSubmit: true, canConfirm: false, canFinalConfirm: true,
     },
     create: {
       roleId: adminRole.id, formId: wasteForm.id,
-      canRead: true, canSubmit: true, canConfirm: true, canFinalConfirm: true,
+      canRead: true, canSubmit: true, canConfirm: false, canFinalConfirm: true,
     },
   });
 

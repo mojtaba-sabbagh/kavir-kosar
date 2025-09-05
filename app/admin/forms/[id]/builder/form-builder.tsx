@@ -2,6 +2,97 @@
 
 import { useState } from 'react';
 
+// --- Kardex config panel for 'kardexItem' fields ---
+type BuilderField = {
+  id: string;
+  key: string;
+  labelFa: string;
+  type: string; // 'kardexItem' | 'number' | ...
+  required?: boolean;
+  order?: number | null;
+  config?: any;
+};
+function KardexConfigPanel({
+  field,
+  allFields,
+  onChange,
+}: {
+  field: BuilderField;
+  allFields: BuilderField[];
+  onChange: (nextConfig: any) => void;
+}) {
+  const cfg = field.config ?? {};
+  const kcfg = cfg.kardex ?? {};
+  const amountKey: string = kcfg.amountKey ?? '';
+  const op: 'deltaPlus' | 'deltaMinus' | 'set' = kcfg.op ?? 'deltaPlus';
+  const applyOn: 'final' | 'anyConfirm' = kcfg.applyOn ?? 'final';
+
+  // Allowed numeric fields to pair with this picker
+  const numericFields = allFields.filter(f => f.type === 'number');
+
+  const setCfg = (patch: Partial<typeof kcfg>) => {
+    onChange({
+      ...cfg,
+      kardex: { ...kcfg, ...patch },
+    });
+  };
+
+  return (
+    <div className="mt-4 border-t pt-4 space-y-3" dir="rtl">
+      <h4 className="font-semibold text-sm">تنظیمات کاردکس</h4>
+
+      <label className="block text-sm">
+        فیلد مقدار مرتبط
+        <select
+          className="mt-1 w-full rounded-md border px-2 py-1"
+          value={amountKey}
+          onChange={e => setCfg({ amountKey: e.target.value })}
+        >
+          <option value="">— انتخاب کنید —</option>
+          {numericFields.map(nf => (
+            <option key={nf.key} value={nf.key}>
+              {nf.labelFa} ({nf.key})
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="block text-sm">
+        نوع عملیات
+        <select
+          className="mt-1 w-full rounded-md border px-2 py-1"
+          value={op}
+          onChange={e => setCfg({ op: e.target.value as any })}
+        >
+          <option value="deltaPlus">افزایش (delta+)</option>
+          <option value="deltaMinus">کاهش (delta−)</option>
+          <option value="set">تنظیم موجودی (set)</option>
+        </select>
+      </label>
+
+      <label className="block text-sm">
+        زمان اعمال
+        <select
+          className="mt-1 w-full rounded-md border px-2 py-1"
+          value={applyOn}
+          onChange={e => setCfg({ applyOn: e.target.value as any })}
+        >
+          <option value="final">در تأیید نهایی</option>
+          <option value="anyConfirm">در هر تأیید</option>
+        </select>
+      </label>
+
+      {/* Optional helper */}
+      {!amountKey && (
+        <p className="text-xs text-amber-600">
+          برای اعمال تغییر موجودی، انتخاب «فیلد مقدار مرتبط» ضروری است.
+        </p>
+      )}
+    </div>
+  );
+}
+
+
 type Field = {
   id?: string;
   key: string;
@@ -174,6 +265,13 @@ export default function FormBuilder({ form: initialForm, fields: initialFields }
                 </div>
               )}
 
+              {f.type === 'kardexItem' && (
+                <KardexConfigPanel
+                  field={f}
+                  allFields={fields}
+                  onChange={(nextConfig) => updateField(idx, { config: nextConfig })}
+                />
+              )}
               <div className="mt-3 text-left">
                 <button onClick={()=>removeField(idx)} type="button" className="text-red-600 text-sm hover:underline">حذف فیلد</button>
               </div>

@@ -1,0 +1,3 @@
+
+// Be the root application folder and xsl data is in the root folder then run the following command.
+npx tsx scripts/import-kardex.ts

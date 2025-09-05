@@ -263,7 +263,7 @@ model KardexItem {
   updatedAt    DateTime @updatedAt
 
   // add:
-  txns KardexTxn[] // ⬅️ back-relation for movements
+  txns KardexTxn[] // back-relation for movements
 }
 
 // How a specific form maps its fields to Kardex
@@ -301,12 +301,13 @@ model KardexTxn {
   form     Form   @relation(fields: [formId], references: [id], onDelete: NoAction)
   formCode String
 
-  userId   String // who caused the apply (usually final confirmer)
-  qtyDelta Decimal  @db.Decimal(18, 3)
+  appliedById   String // who caused the apply (usually final confirmer)
+  delta      Decimal // signed change applied
   prevQty  Decimal? @db.Decimal(18, 3)
   newQty   Decimal? @db.Decimal(18, 3)
   note     String?
-
+  op         String  // "deltaPlus" | "deltaMinus" | "set"
+  amount     Decimal // or Float
   createdAt DateTime @default(now())
 
   @@unique([entryId]) // idempotency: apply once per entry

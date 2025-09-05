@@ -46,48 +46,57 @@ export default function PermissionsEditor({
   // If props change (e.g., after server refresh), sync state
   useEffect(() => setMatrix(initial), [initial]);
 
-  // Toggle with full dependency rules
-  const onToggle = (
-    roleId: string,
-    formId: string,
-    field: 'canRead' | 'canSubmit' | 'canConfirm' | 'canFinalConfirm'
-  ) => {
-    const key = `${roleId}:${formId}`;
-    setSaved(null);
-    setMatrix(prev => {
-      const cur: Cell = prev[key] ?? { canRead: false, canSubmit: false, canConfirm: false, canFinalConfirm: false };
-      const next: Cell = { ...cur };
+const onToggle = (
+  roleId: string,
+  formId: string,
+  field: 'canRead' | 'canSubmit' | 'canConfirm' | 'canFinalConfirm'
+) => {
+  const key = `${roleId}:${formId}`;
+  setSaved(null);
+  setMatrix(prev => {
+    const cur: Cell = prev[key] ?? { canRead:false, canSubmit:false, canConfirm:false, canFinalConfirm:false };
+    const next: Cell = { ...cur };
 
-      if (field === 'canFinalConfirm') {
-        next.canFinalConfirm = !cur.canFinalConfirm;
-        if (next.canFinalConfirm) {
-          next.canConfirm = true;
-          next.canRead = true;
-        }
-      } else if (field === 'canConfirm') {
-        next.canConfirm = !cur.canConfirm;
-        if (next.canConfirm) {
-          next.canRead = true;
-        } else {
-          // dropping confirm must also drop final
-          next.canFinalConfirm = false;
-        }
-      } else if (field === 'canSubmit') {
-        next.canSubmit = !cur.canSubmit;
-        if (next.canSubmit) next.canRead = true;
-      } else if (field === 'canRead') {
-        next.canRead = !cur.canRead;
-        if (!next.canRead) {
-          // removing read clears all others
-          next.canSubmit = false;
-          next.canConfirm = false;
-          next.canFinalConfirm = false;
-        }
+    if (field === 'canFinalConfirm') {
+      const newVal = !cur.canFinalConfirm;
+      next.canFinalConfirm = newVal;
+      if (newVal) {
+        next.canConfirm = false; // mutually exclusive
+        next.canRead = true;
       }
+      // enforce single final per form in UI: clear others' final
+      if (newVal) {
+        const draft = { ...prev, [key]: next };
+        for (const r of roles) {
+          const otherKey = `${r.id}:${formId}`;
+          if (otherKey !== key && draft[otherKey]?.canFinalConfirm) {
+            draft[otherKey] = { ...draft[otherKey], canFinalConfirm: false };
+          }
+        }
+        return draft;
+      }
+    } else if (field === 'canConfirm') {
+      const newVal = !cur.canConfirm;
+      next.canConfirm = newVal;
+      if (newVal) {
+        next.canFinalConfirm = false; // mutually exclusive
+        next.canRead = true;
+      }
+    } else if (field === 'canSubmit') {
+      next.canSubmit = !cur.canSubmit;
+      if (next.canSubmit) next.canRead = true;
+    } else if (field === 'canRead') {
+      next.canRead = !cur.canRead;
+      if (!next.canRead) {
+        next.canSubmit = false;
+        next.canConfirm = false;
+        next.canFinalConfirm = false;
+      }
+    }
 
-      return { ...prev, [key]: next };
-    });
-  };
+    return { ...prev, [key]: next };
+  });
+};
 
   const save = async () => {
     setSaving(true);

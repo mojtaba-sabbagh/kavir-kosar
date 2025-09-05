@@ -207,9 +207,13 @@ export default function DynamicForm({ form, fields }: Props) {
                 <KardexPicker
                   label={f.labelFa}
                   value={values[f.key] || ''}
-                  onSelect={(val) => {
-                    set(f.key, val.code);
-                    if (cfg?.nameKey) set(cfg.nameKey, val.nameFa);
+                  onSelect={(it) => {
+                    // store the chosen code in your payload
+                    set(f.key, it.code);
+                    // optionally store name too if you have a companion key in config
+                    if ((f.config as any)?.nameKey) {
+                      set((f.config as any).nameKey, it.nameFa);
+                    }
                   }}
                 />
               )}

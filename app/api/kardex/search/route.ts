@@ -1,24 +1,34 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { canReadReport } from '@/lib/reports';
+import { normalizeFa } from '@/lib/fa-normalize';
+
+export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request) {
-  // Accept users who can read the Kardex report
-  const ok = await canReadReport('KARDEX');
-  if (!ok) return NextResponse.json({ items: [] });
-
   const url = new URL(req.url);
-  const q = (url.searchParams.get('q') || '').trim();
+  const raw = url.searchParams.get('q') ?? '';
+  const q = raw.trim();
   if (!q) return NextResponse.json({ items: [] });
 
-  const items = await prisma.kardexItem.findMany({
-    where: { OR: [{ code: { contains: q } }, { nameFa: { contains: q } }] },
+  const nq = normalizeFa(q);
+
+  // Build OR filters using both raw & normalized, for name and code.
+  const orName = [
+    { nameFa: { contains: q,  mode: 'insensitive' as const } },
+    { nameFa: { contains: nq, mode: 'insensitive' as const } },
+  ];
+
+  const orCode = [
+    { code: { contains: q,  mode: 'insensitive' as const } },
+    { code: { contains: nq, mode: 'insensitive' as const } },
+  ];
+
+  const rows = await prisma.kardexItem.findMany({
+    where: { OR: [...orName, ...orCode] },
+    orderBy: [{ nameFa: 'asc' }],
     take: 20,
-    orderBy: [{ nameFa: 'asc' }, { code: 'asc' }],
     select: { id: true, code: true, nameFa: true, unit: true },
   });
 
-  return NextResponse.json({
-    items: items.map(i => ({ id: i.id, code: i.code, nameFa: i.nameFa, unit: i.unit })),
-  });
+  return NextResponse.json({ items: rows });
 }

@@ -2,111 +2,111 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { requireAdmin } from '@/lib/rbac';
 import { z } from 'zod';
+import { syncReportPermsBulk } from '@/lib/report-sync';
 
-const Cell = z.object({
-  canRead: z.boolean().optional().default(false),
-  canSubmit: z.boolean().optional().default(false),
-  canConfirm: z.boolean().optional().default(false),
-  canFinalConfirm: z.boolean().optional().default(false),
-});
-const MatrixSchema = z.record(z.string(), Cell); // key = "roleId:formId"
+const MatrixSchema = z.record(
+  z.string(), // `${roleId}:${formId}`
+  z.object({
+    canRead: z.boolean().optional().default(false),
+    canSubmit: z.boolean().optional().default(false),
+    canConfirm: z.boolean().optional().default(false),
+    canFinalConfirm: z.boolean().optional().default(false),
+  })
+);
 
-export const dynamic = 'force-dynamic';
-export const runtime = 'nodejs';
+type Cell = {
+  canRead: boolean;
+  canSubmit: boolean;
+  canConfirm: boolean;
+  canFinalConfirm: boolean;
+};
 
 export async function POST(req: Request) {
-  try { await requireAdmin(); } catch { return NextResponse.json({ message: 'دسترسی غیرمجاز' }, { status: 403 }); }
+  try { await requireAdmin(); } 
+  catch { return NextResponse.json({ message: 'دسترسی غیرمجاز' }, { status: 403 }); }
 
   const body = await req.json().catch(() => null);
   const parsed = z.object({ matrix: MatrixSchema }).safeParse(body);
-  if (!parsed.success) return NextResponse.json({ message: 'ورودی نامعتبر' }, { status: 422 });
-
-  // 1) Normalize incoming cells per rule
-  const proposed: Record<string, { canRead:boolean; canSubmit:boolean; canConfirm:boolean; canFinalConfirm:boolean }> = {};
-  for (const [k, v] of Object.entries(parsed.data.matrix)) {
-    // read must be true if any capability is true
-    let canFinalConfirm = !!v.canFinalConfirm;
-    let canConfirm      = !!v.canConfirm;
-    let canSubmit       = !!v.canSubmit;
-    let canRead         = !!v.canRead || canSubmit || canConfirm || canFinalConfirm;
-
-    // company rules:
-    // - final and confirm are mutually exclusive
-    if (canFinalConfirm && canConfirm) {
-      // prefer final, drop confirm
-      canConfirm = false;
-    }
-    // - if read is off, everything else must be off
-    if (!canRead) {
-      canSubmit = false; canConfirm = false; canFinalConfirm = false;
-    }
-    // ensure read if any others true
-    if (canSubmit || canConfirm || canFinalConfirm) canRead = true;
-
-    proposed[k] = { canRead, canSubmit, canConfirm, canFinalConfirm };
+  if (!parsed.success) {
+    return NextResponse.json({ message: 'ورودی نامعتبر' }, { status: 422 });
   }
 
-  // 2) Load current DB perms for all affected forms so we can validate "one final per form"
-  const affected = Object.keys(proposed).map(k => {
-    const [roleId, formId] = k.split(':');
-    return { roleId, formId };
-  });
-  const affectedFormIds = Array.from(new Set(affected.map(a => a.formId)));
+  // 1) Normalize client payload with company rules:
+  //    - If canFinalConfirm => force canConfirm=false (XOR) and canRead=true
+  //    - If canConfirm => canRead=true
+  //    - If canRead=false => clear all others
+  //    - If canSubmit=true => canRead=true
+  const normalized: Record<string, Cell> = {};
+  for (const [key, v] of Object.entries(parsed.data.matrix)) {
+    const wantsFinal = !!v.canFinalConfirm;
+    const wantsConfirm = !!v.canConfirm && !wantsFinal; // XOR: final wins, confirm forced false
+    // compute read
+    const read = wantsFinal || wantsConfirm || !!v.canSubmit || !!v.canRead;
 
-  const current = await prisma.roleFormPermission.findMany({
-    where: { formId: { in: affectedFormIds } },
-    select: { roleId: true, formId: true, canRead: true, canSubmit: true, canConfirm: true, canFinalConfirm: true },
-  });
-
-  // Build a map of the post-save state = current DB state overridden by proposed
-  const nextMap = new Map<string, { roleId:string; formId:string; canRead:boolean; canSubmit:boolean; canConfirm:boolean; canFinalConfirm:boolean }>();
-  // seed with current
-  for (const c of current) {
-    const key = `${c.roleId}:${c.formId}`;
-    nextMap.set(key, { ...c });
-  }
-  // apply proposed changes
-  for (const [k, v] of Object.entries(proposed)) {
-    const [roleId, formId] = k.split(':');
-    nextMap.set(k, { roleId, formId, ...v });
+    normalized[key] = {
+      canRead: read,
+      canSubmit: read ? !!v.canSubmit : false,
+      canConfirm: read ? wantsConfirm : false,
+      canFinalConfirm: read ? wantsFinal : false,
+    };
   }
 
-  // 3) Validate: for each form, at most one final = true
-  for (const formId of affectedFormIds) {
-    let finals = 0;
-    for (const v of nextMap.values()) {
-      if (v.formId === formId && v.canFinalConfirm) finals++;
-      if (finals > 1) {
-        return NextResponse.json(
-          { message: 'برای هر فرم فقط یک "تاییدکننده نهایی" مجاز است' },
-          { status: 422 }
-        );
+  // 2) Prepare changes for report mirroring
+  const changes: Array<{ roleId: string; formId: string; canRead: boolean }> = [];
+
+  // 3) Group by form to enforce "only one final confirmer per form"
+  const perForm = new Map<string, Array<{ roleId: string; cell: Cell }>>();
+  for (const [key, cell] of Object.entries(normalized)) {
+    const [roleId, formId] = key.split(':');
+    const arr = perForm.get(formId) ?? [];
+    arr.push({ roleId, cell });
+    perForm.set(formId, arr);
+  }
+
+  // 4) Write everything in a single transaction per form:
+  for (const [formId, rows] of perForm) {
+    await prisma.$transaction(async (tx) => {
+      // Find all roles marked as final for this form in the submitted matrix
+      const finals = rows.filter(r => r.cell.canFinalConfirm).map(r => r.roleId);
+
+      // If there will be a final confirmer, we will clear all others on DB.
+      // (If multiple finals are sent, we still allow them; after upserts we clear others to keep one-per-form.)
+      for (const { roleId, cell } of rows) {
+        changes.push({ roleId, formId, canRead: cell.canRead });
+
+        await tx.roleFormPermission.upsert({
+          where: { roleId_formId: { roleId, formId } },
+          update: {
+            canRead: cell.canRead,
+            canSubmit: cell.canSubmit,
+            canConfirm: cell.canConfirm,
+            canFinalConfirm: cell.canFinalConfirm,
+          },
+          create: {
+            roleId,
+            formId,
+            canRead: cell.canRead,
+            canSubmit: cell.canSubmit,
+            canConfirm: cell.canConfirm,
+            canFinalConfirm: cell.canFinalConfirm,
+          },
+        });
       }
-    }
+
+      // Enforce "only one final confirmer per form":
+      if (finals.length > 0) {
+        // Keep the last one in the submitted list as the winner
+        const winnerRoleId = finals[finals.length - 1];
+        await tx.roleFormPermission.updateMany({
+          where: { formId, roleId: { not: winnerRoleId }, canFinalConfirm: true },
+          data: { canFinalConfirm: false },
+        });
+      }
+    });
   }
 
-  // 4) Persist in a transaction
-  await prisma.$transaction(
-    Array.from(nextMap.entries()).map(([k, v]) => {
-      const [roleId, formId] = k.split(':');
-      return prisma.roleFormPermission.upsert({
-        where: { roleId_formId: { roleId, formId } },
-        update: {
-          canRead: v.canRead,
-          canSubmit: v.canSubmit,
-          canConfirm: v.canConfirm,
-          canFinalConfirm: v.canFinalConfirm,
-        },
-        create: {
-          roleId, formId,
-          canRead: v.canRead,
-          canSubmit: v.canSubmit,
-          canConfirm: v.canConfirm,
-          canFinalConfirm: v.canFinalConfirm,
-        },
-      });
-    })
-  );
+  // 5) Mirror Form.canRead → Report.canView
+  await syncReportPermsBulk(changes);
 
   return NextResponse.json({ ok: true });
 }

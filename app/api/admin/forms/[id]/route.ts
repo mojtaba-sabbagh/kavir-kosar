@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { requireAdmin } from '@/lib/rbac';
 import { z } from 'zod';
+import { ensureReportForForm } from '@/lib/report-sync';
 
 const KardexSchema = z.object({
   codeKey: z.string().min(1),        // the FormField.key that holds کالا کد
@@ -19,11 +20,11 @@ const KardexSchema = z.object({
   { message: 'برای اتصال به کاردکس، فیلدهای codeKey و qtyKey الزامی است.' }
 );
 
-export async function PUT(_req: Request, props: { params: Promise<{ id: string }> }) {
+export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try { await requireAdmin(); } catch { return NextResponse.json({ message: 'دسترسی غیرمجاز' }, { status: 403 }); }
-  const { id } = await props.params;
+  const { id } = await ctx.params;
 
-  const body = await _req.json().catch(()=>null);
+  const body = await req.json().catch(()=>null);
   const p = z.object({
     titleFa: z.string().min(2),
     sortOrder: z.number().int().default(100),
@@ -55,7 +56,8 @@ export async function PUT(_req: Request, props: { params: Promise<{ id: string }
     });
   }
   // -----------------------------------------------------
-
+  await ensureReportForForm(id);
+  
   return NextResponse.json({ ok: true });
 }
 

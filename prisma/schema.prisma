@@ -26,8 +26,7 @@ model User {
   formConfirmations      FormConfirmer[] // users assigned as regular confirmers
   formFinalConfirmations FormFinalConfirmer[] // users assigned as final confirmer
   confirmationTasks      ConfirmationTask[] // per-entry tasks for this user
-  finalConfirmedEntries FormEntry[] @relation("FinalConfirmedBy")
-
+  finalConfirmedEntries  FormEntry[]          @relation("FinalConfirmedBy")
 }
 
 model Role {
@@ -36,8 +35,7 @@ model Role {
   // existing relations
   users             UserRole[]
   formPermissions   RoleFormPermission[] // ⬅️ your form permissions back-relation
-  // NEW back-relation for reports:
-  reportPermissions RoleReportPermission[] // ⬅️ add this
+  reportPermissions RoleReportPermission[]
 }
 
 model UserRole {
@@ -73,6 +71,9 @@ model Form {
   finalConfirmer FormFinalConfirmer?
   kardexRule     FormKardexRule? // ⬅️ back-relation (one rule per form)
   kardexTxns     KardexTxn[] // ⬅️ back-relation for Txns referencing this form
+
+  report       FormReport?
+  reportofform Report?
 }
 
 enum FieldType {
@@ -141,11 +142,11 @@ model FormEntry {
   formVersion Int @default(1)
 
   // workflow timestamps (optional convenience)
-  firstConfirmedAt DateTime?
-  finalConfirmedAt DateTime?
+  firstConfirmedAt   DateTime?
+  finalConfirmedAt   DateTime?
   finalConfirmedById String?
-  finalConfirmedBy   User?      @relation("FinalConfirmedBy", fields: [finalConfirmedById], references: [id])
-  status           EntryStatus @default(submitted)
+  finalConfirmedBy   User?       @relation("FinalConfirmedBy", fields: [finalConfirmedById], references: [id])
+  status             EntryStatus @default(submitted)
 
   form  Form               @relation(fields: [formId], references: [id], onDelete: Cascade)
   tasks ConfirmationTask[]
@@ -207,7 +208,7 @@ enum ConfirmationStatus {
 }
 
 model ConfirmationTask {
-  id          String    @id @default(uuid())
+  id          String              @id @default(uuid())
   formEntryId String
   userId      String
   isFinal     Boolean
@@ -220,32 +221,54 @@ model ConfirmationTask {
   @@unique([formEntryId, userId, isFinal])
 }
 
+model FormReport {
+  id     String @id @default(uuid())
+  formId String @unique
+  form   Form   @relation(fields: [formId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum SortDir {
+  asc
+  desc
+}
 
 model Report {
   id        String   @id @default(uuid())
-  code      String   @unique
+  code      String   @unique          // e.g. "RPT:FORM:STP-INPUT"
   titleFa   String
-  url       String?
   sortOrder Int      @default(100)
-  isActive  Boolean  @default(true)
+
+  // tie to form (one-to-one)
+  formId    String?   @unique
+  form      Form?     @relation(fields: [formId], references: [id], onDelete: Cascade)
+  
+  rolePermissions RoleReportPermission[]
+  
+  url             String?
+  isActive        Boolean                @default(true)
+  
+  visibleColumns String[] @default([])
+  filterableKeys String[] @default([])
+  orderableKeys  String[] @default([])
+  defaultOrder   Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  // back-relation to RoleReportPermission (you likely already had this)
-  rolePermissions RoleReportPermission[]
 }
 
+
 model RoleReportPermission {
-  id       String  @id @default(uuid())
+  id       String @id @default(uuid())
   roleId   String
   reportId String
-  canView  Boolean @default(false)
+  role     Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  report   Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
-  // forward relations with explicit fields/references
-  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  canView Boolean @default(false)
 
-  @@unique([roleId, reportId], name: "roleId_reportId")
+  @@unique([roleId, reportId])
 }
 
 model KardexItem {
@@ -301,14 +324,14 @@ model KardexTxn {
   form     Form   @relation(fields: [formId], references: [id], onDelete: NoAction)
   formCode String
 
-  appliedById   String // who caused the apply (usually final confirmer)
-  delta      Decimal // signed change applied
-  prevQty  Decimal? @db.Decimal(18, 3)
-  newQty   Decimal? @db.Decimal(18, 3)
-  note     String?
-  op         String  // "deltaPlus" | "deltaMinus" | "set"
-  amount     Decimal // or Float
-  createdAt DateTime @default(now())
+  appliedById String // who caused the apply (usually final confirmer)
+  delta       Decimal // signed change applied
+  prevQty     Decimal? @db.Decimal(18, 3)
+  newQty      Decimal? @db.Decimal(18, 3)
+  note        String?
+  op          String // "deltaPlus" | "deltaMinus" | "set"
+  amount      Decimal // or Float
+  createdAt   DateTime @default(now())
 
   @@unique([entryId]) // idempotency: apply once per entry
   @@index([itemId])

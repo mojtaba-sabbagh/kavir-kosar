@@ -1,28 +1,38 @@
 import { prisma } from '@/lib/db';
-import { requireAdminOrRedirect } from '@/lib/rbac';
 import FormBuilder from './form-builder';
 
-export default async function BuilderPage(
-  props: { params: Promise<{ id: string }> }
-) {
-  await requireAdminOrRedirect();
+export default async function BuilderPage(props: { params: Promise<{ id: string }> }) {
   const { id } = await props.params;
 
-  const form = await prisma.form.findUnique({
-    where: { id },
-    include: { fields: true },
-  });
-  if (!form) return <div className="text-red-600">فرم یافت نشد</div>;
+  const [form, fields, report] = await Promise.all([
+    prisma.form.findUnique({ where: { id }, select: { id:true, code:true, titleFa:true, isActive:true, sortOrder:true, version:true } }),
+    prisma.formField.findMany({ where: { formId: id }, orderBy: { order: 'asc' },
+      select: { id:true, key:true, labelFa:true, type:true, required:true, order:true, config:true } }),
+    prisma.report.findUnique({
+      where: { formId: id },
+      select: {
+        visibleColumns:true, filterableKeys:true, orderableKeys:true, defaultOrder:true,
+      },
+    }),
+  ]);
 
-  // Normalize fields for client
-  const fields = form.fields
-    .map(f => ({ id: f.id, key: f.key, labelFa: f.labelFa, type: f.type, required: f.required, order: f.order ?? 0, config: f.config ?? {} }))
-    .sort((a,b)=>a.order-b.order);
+  const initialReportConfig = report ? {
+    visibleColumns: report.visibleColumns ?? [],
+    filterableKeys: report.filterableKeys ?? [],
+    orderableKeys:  report.orderableKeys  ?? [],
+    defaultOrder:   (report.defaultOrder as any) ?? { key: 'createdAt', dir: 'desc' },
+  } : {
+    visibleColumns: [],
+    filterableKeys: [],
+    orderableKeys:  ['createdAt'],
+    defaultOrder:   { key: 'createdAt', dir: 'desc' as const },
+  };
 
   return (
     <FormBuilder
-      form={{ id: form.id, code: form.code, titleFa: form.titleFa, isActive: form.isActive, sortOrder: form.sortOrder, version: form.version }}
+      form={form!}
       fields={fields}
+      initialReportConfig={initialReportConfig}
     />
   );
 }

@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+// guard so we only initialize order once from server meta
+import { useEffect, useMemo, useRef, useState } from 'react';
 import JDateRangeFilter from '@/components/ui/JDateRangeFilter';
 import JDateTimeRangeFilter from '@/components/ui/JDateTimeRangeFilter';
 
@@ -29,83 +30,82 @@ export default function FormReportClient({ code }: { code: string }) {
 
   // order state (initialize with sensible defaults; update from meta when it arrives)
   const [orderKey, setOrderKey] = useState<string>('createdAt');
-  const [orderDir, setOrderDir] = useState<'asc' | 'desc'>('desc');
-
+  const [orderDir, setOrderDir] = useState<'asc'|'desc'>('desc');
+  
   // filters: key -> string | {from?: string; to?: string}
   type Filters = Record<string, any>;
   const [filters, setFilters] = useState<Filters>({});
 
-  // When meta changes, adopt server default order (only once per meta refresh)
-  useEffect(() => {
-    if (!meta) return;
-    if (meta.defaultOrder?.key) setOrderKey(meta.defaultOrder.key);
-    if (meta.defaultOrder?.dir) setOrderDir(meta.defaultOrder.dir as 'asc' | 'desc');
-  }, [meta]);
+  // guard so we only initialize order once from server meta
+  const didInitOrder = useRef(false);
 
-  // Build querystring for API
-  const qs = useMemo(() => {
-    const p = new URLSearchParams();
+  
+  
+// build qs stays the same (depends on orderKey/orderDir)
+const qs = useMemo(() => {
+  const p = new URLSearchParams();
 
-    // order
-    p.set('order', orderKey || 'createdAt');
-    p.set('dir', orderDir || 'desc');
+  // order & paging
+  p.set('order', orderKey || 'createdAt');
+  p.set('dir', orderDir || 'desc');
+  p.set('page', '1');
+  p.set('pageSize', '20');
 
-    // pagination (static for now)
-    p.set('page', '1');
-    p.set('pageSize', '20');
+  // determine which keys to serialize:
+  // prefer filterableKeys from server; fallback to whatever user edited (filters keys)
+  const allowed = new Set([
+    ...(meta?.filterableKeys ?? []),
+    ...Object.keys(filters ?? {})
+  ]);
 
-    // filters
-    if (meta?.filterableKeys?.length) {
-      for (const k of meta.filterableKeys) {
-        const t = (schema.find(s => s.key === k)?.type) || 'text';
-        const v = filters[k];
+  for (const k of allowed) {
+    const t = schema.find(s => s.key === k)?.type || 'text';
+    const v = (filters as any)?.[k];
 
-        if (t === 'date' || t === 'datetime') {
-          if (v?.from) p.set(`filter_${k}_from`, v.from);
-          if (v?.to) p.set(`filter_${k}_to`, v.to);
-        } else {
-          if (v != null && v !== '') p.set(`filter_${k}`, String(v));
-        }
-      }
+    if (t === 'date' || t === 'datetime') {
+      if (v?.from) p.set(`filter_${k}_from`, v.from);
+      if (v?.to)   p.set(`filter_${k}_to`,   v.to);
+    } else {
+      if (v != null && v !== '') p.set(`filter_${k}`, String(v));
     }
+  }
 
-    return `?${p.toString()}`;
-  }, [orderKey, orderDir, filters, meta?.filterableKeys, schema]);
+  return `?${p.toString()}`;
+}, [orderKey, orderDir, filters, meta?.filterableKeys, schema]);
 
   // Fetch data
-  useEffect(() => {
-    let cancel = false;
-    (async () => {
-      setLoading(true);
-      setErr(null);
-      try {
-        const res = await fetch(`/api/reports/${encodeURIComponent(code)}/entries${qs}`, { cache: 'no-store' });
-        const ctype = res.headers.get('content-type') || '';
-        if (!ctype.includes('application/json')) {
-          const text = await res.text();
-          throw new Error(text || 'پاسخ معتبر دریافت نشد');
-        }
-        const j = await res.json();
-        if (!res.ok || !j.ok) throw new Error(j.message || 'خطا');
+useEffect(() => {
+  let cancel = false;
+  (async () => {
+    setLoading(true); setErr(null);
+    try {
+      const res = await fetch(`/api/reports/${encodeURIComponent(code)}/entries${qs}`, { cache: 'no-store' });
+      const j = await res.json();
 
-        if (!cancel) {
-          setMeta(j.meta);
-          setLabels(j.labels || {});
-          setRows(j.rows || []);
-          setDisplayMaps(j.displayMaps || {});
-          setSchema(j.schema || []);
+      if (!cancel) {
+        setMeta(j.meta);
+        setLabels(j.labels || {});
+        setRows(j.rows || []);
+        setDisplayMaps(j.displayMaps || {});
+        setSchema(j.schema || {});
+
+        // Initialize order ONLY ONCE from server-provided defaults
+        if (!didInitOrder.current) {
+          const initialKey = j.meta?.orderApplied || j.meta?.defaultOrder?.key || 'createdAt';
+          const initialDir = j.meta?.defaultOrder?.dir || 'desc';
+          setOrderKey(initialKey);
+          setOrderDir(initialDir);
+          didInitOrder.current = true;
         }
-      } catch (e: any) {
-        if (!cancel) setErr(e?.message || 'خطا');
-      } finally {
-        if (!cancel) setLoading(false);
       }
-    })();
-
-    return () => {
-      cancel = true;
-    };
-  }, [code, qs]);
+    } catch (e: any) {
+      if (!cancel) setErr(e?.message || 'خطا');
+    } finally {
+      if (!cancel) setLoading(false);
+    }
+  })();
+  return () => { cancel = true; };
+}, [code, qs]);
 
   // Build map key->type
   const typeByKey = useMemo(() => {

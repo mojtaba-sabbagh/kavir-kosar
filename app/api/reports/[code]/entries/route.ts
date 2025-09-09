@@ -44,24 +44,21 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
       },
     });
     if (!form) return NextResponse.json({ ok: false, message: 'فرم یافت نشد' }, { status: 404 });
-   
 
     const typeByKey: Record<string, string> = {};
     for (const f of form.fields) typeByKey[f.key] = f.type;
-    // Load report
-    const report = await prisma.report.findFirst({
-      where: { formId: form.id },
-    });
+
+    const report = await prisma.report.findFirst({ where: { formId: form.id } });
     const visibleColumns: string[] = report?.visibleColumns ?? [];
     const filterableKeys: string[] = report?.filterableKeys ?? [];
     const orderableKeys: string[] = report?.orderableKeys ?? [];
     const defaultOrder = (report?.defaultOrder as any) ?? null;
-    console.log(report);
+
     // Labels
     const labels: Record<string, string> = {};
     for (const f of form.fields) labels[f.key] = f.labelFa;
 
-    // Display maps (select options)
+    // Display maps (select/multiselect options)
     const displayMaps: Record<string, Record<string, string>> = {};
     for (const f of form.fields) {
       const cfg = (f.config ?? {}) as any;
@@ -74,119 +71,127 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
       }
     }
 
-    // Prepare schema for client
+    // Schema for client
     const schema = form.fields.map(f => ({
       key: f.key,
       type: f.type,
       config: f.config || {},
     }));
 
-    // We will use raw SQL with parametrized values
+    // ---------- WHERE builder (raw SQL with params) ----------
     const params: any[] = [];
     let whereSql = `"formId" = $1`;
     params.push(form.id);
 
-    // --- filter_<key>=value (with kardexItem special handling) ---
-    const kardexSqlParts: string[] = [];
-    const kardexSqlParams: any[] = [];
+    // Collect date/datetime ranges separately so we don't accidentally add ILIKE for _from/_to
+    const dtRanges: Record<string, { from?: string; to?: string }> = {};
 
-    for (const [k, v] of url.searchParams.entries()) {
-      if (!k.startsWith('filter_')) continue;
-      const key = k.slice('filter_'.length);
-      if (!key || !IDENT_SAFE.test(key)) continue;
+    for (const [rawK, v] of url.searchParams.entries()) {
+      if (!rawK.startsWith('filter_')) continue;
       if (!v) continue;
+
+      // ✅ parse key & bound without breaking on inner underscores
+      let key = rawK.slice('filter_'.length); // strip `filter_`
+      let bound: 'from' | 'to' | undefined;
+      if (key.endsWith('_from')) { bound = 'from'; key = key.slice(0, -'_from'.length); }
+      else if (key.endsWith('_to')) { bound = 'to'; key = key.slice(0, -'_to'.length); }
+
+      if (!key || !IDENT_SAFE.test(key)) continue;
 
       const ftype = typeByKey[key];
 
-      if (ftype === 'kardexItem') {
-        // Translate user text to kardex codes (by nameFa or code)
-        const matches = await prisma.kardexItem.findMany({
-          where: {
-            OR: [
-              { nameFa: { contains: v, mode: 'insensitive' } },
-              { code:   { contains: v, mode: 'insensitive' } },
-            ],
+      // --- Date / Datetime: collect into dtRanges; skip generic clause
+      if ((ftype === 'date' || ftype === 'datetime') && bound) {
+        dtRanges[key] = dtRanges[key] || {};
+        dtRanges[key][bound] = v;
+        continue;
+      }
+
+      // --- Kardex: translate user text to codes and generate OR equals chain
+      // --- Kardex: translate text -> codes and append an OR-equals group immediately
+    if (ftype === 'kardexItem') {
+      const matches = await prisma.kardexItem.findMany({
+        where: {
+          OR: [
+            { nameFa: { contains: v, mode: 'insensitive' } },
+            { code:   { contains: v, mode: 'insensitive' } },
+          ],
+        },
+        select: { code: true },
+        take: 200,
+      });
+      const codes = [...new Set(matches.map(m => m.code))];
+
+      if (codes.length === 0) {
+        // no match => empty result
+        return NextResponse.json({
+          ok: true,
+          meta: {
+            formCode: form.code, titleFa: form.titleFa,
+            page, pageSize, total: 0,
+            visibleColumns, filterableKeys, orderableKeys, defaultOrder,
+            orderApplied: orderKey === 'createdAt' ? 'createdAt' : orderKey,
           },
-          select: { code: true },
-          take: 200,
+          labels, rows: [], displayMaps, schema,
         });
-        const codes = [...new Set(matches.map(m => m.code))];
+      }
 
-        if (codes.length === 0) {
-          // Short-circuit: no matches => empty result
-          return NextResponse.json({
-            ok: true,
-            meta: {
-              formCode: form.code, titleFa: form.titleFa,
-              page, pageSize, total: 0,
-              visibleColumns, filterableKeys, orderableKeys, defaultOrder,
-              orderApplied: orderKey === 'createdAt' ? 'createdAt' : orderKey,
-            },
-            labels, rows: [], displayMaps, schema,
-          });
-        }
+      // Push the JSON path key now and record its index
+      params.push(key);
+      const keyIdx = params.length;                          // ← index for the key
+      const col = `payload->>$${keyIdx}`;
 
-        // Build: (payload->>$n = $n+1 OR payload->>$n = $n+2 ...)
-        kardexSqlParams.push(key);
-        const col = `payload->>$${params.length + kardexSqlParams.length}`;
-        const parts: string[] = [];
-        for (const c of codes) {
-          kardexSqlParams.push(c);
-          parts.push(`${col} = $${params.length + kardexSqlParams.length}`);
+      // Build (col = $idx OR col = $idx ...)
+      const parts: string[] = [];
+      for (const c of codes) {
+        params.push(c);
+        const valIdx = params.length;                        // ← index for this code
+        parts.push(`${col} = $${valIdx}`);
+      }
+      whereSql += ` AND (${parts.join(' OR ')})`;
+      continue;
+    }
+
+
+  // --- Generic (non-date) contains on JSON text
+  params.push(key, `%${v}%`);
+  whereSql += ` AND payload->>$${params.length - 1} ILIKE $${params.length}`;
+}
+
+
+    // 2) Apply date/datetime ranges in a dedicated pass
+    for (const [k, range] of Object.entries(dtRanges)) {
+      const t = typeByKey[k];
+      if (!t) continue;
+
+      // Lock placeholder for JSON key
+      params.push(k);
+      const keyIdx = params.length;
+
+      if (t === 'date') {
+        const col = `(payload->>$${keyIdx})::date`;
+        if (range.from) {
+          params.push(range.from.slice(0, 10));
+          whereSql += ` AND ${col} >= $${params.length}::date`;
         }
-        kardexSqlParts.push(`(${parts.join(' OR ')})`);
+        if (range.to) {
+          params.push(range.to.slice(0, 10));
+          whereSql += ` AND ${col} <= $${params.length}::date`;
+        }
       } else {
-        // Non-kardex: JSON value contains (ILIKE)
-        params.push(key, `%${v}%`);
-        whereSql += ` AND payload->>$${params.length - 1} ILIKE $${params.length}`;
+        const col = `(payload->>$${keyIdx})::timestamptz`;
+        if (range.from) {
+          params.push(range.from);
+          whereSql += ` AND ${col} >= $${params.length}::timestamptz`;
+        }
+        if (range.to) {
+          params.push(range.to);
+          whereSql += ` AND ${col} <= $${params.length}::timestamptz`;
+        }
       }
     }
 
-    // --- date/datetime ranges: filter_<key>_from / filter_<key>_to ---
-for (const k of filterableKeys) {
-  const t = typeByKey[k];
-  if (t !== 'date' && t !== 'datetime') continue;
-
-  const fromRaw = url.searchParams.get(`filter_${k}_from`) || '';
-  const toRaw   = url.searchParams.get(`filter_${k}_to`)   || '';
-  if (!fromRaw && !toRaw) continue;
-
-  // Lock placeholder for the JSON path *once*
-  params.push(k);
-  const keyIdx = params.length;
-
-  if (t === 'date') {
-    // Compare by DATE (no time)
-    const col = `(payload->>$${keyIdx})::date`;
-    if (fromRaw) {
-      params.push(fromRaw.slice(0, 10));                // YYYY-MM-DD
-      whereSql += ` AND ${col} >= $${params.length}::date`;
-    }
-    if (toRaw) {
-      params.push(toRaw.slice(0, 10));
-      whereSql += ` AND ${col} <= $${params.length}::date`;
-    }
-  } else {
-    // datetime: support both offset-aware and naive strings
-    const col = `
-      CASE
-        WHEN (payload->>$${keyIdx}) ~* '(Z|[+-][0-9]{2}:[0-9]{2})$'
-          THEN (payload->>$${keyIdx})::timestamptz
-        ELSE (payload->>$${keyIdx})::timestamp AT TIME ZONE 'UTC'
-      END
-    `;
-    if (fromRaw) {
-      params.push(fromRaw);                              // already ISO with Z from client
-      whereSql += ` AND ${col} >= $${params.length}::timestamptz`;
-    }
-    if (toRaw) {
-      params.push(toRaw);
-      whereSql += ` AND ${col} <= $${params.length}::timestamptz`;
-    }
-  }
-}
-
-    // --- optional global text across filterableKeys (text-ish only) ---
+    // 3) Optional global text across filterableKeys
     if (text && filterableKeys.length) {
       const ors: string[] = [];
       for (const k of filterableKeys) {
@@ -201,26 +206,28 @@ for (const k of filterableKeys) {
       if (ors.length) whereSql += ` AND (${ors.join(' OR ')})`;
     }
 
-    // Merge kardex fragments
-    if (kardexSqlParts.length) {
-      whereSql += ` AND (${kardexSqlParts.join(' AND ')})`;
-      params.push(...kardexSqlParams);
-    }
-
-    // --- Count with same WHERE ---
+    // ---------- COUNT ----------
     const countRows = await prisma.$queryRawUnsafe<{ count: string }[]>(
       `SELECT COUNT(*)::text AS count FROM "FormEntry" WHERE ${whereSql}`,
       ...params
     );
     const total = parseInt(countRows?.[0]?.count || '0', 10);
 
-    // --- ORDER BY ---
-    let orderSql = `"createdAt" ${dir}`;
+    // --- ORDER BY (and an optional JOIN when ordering by kardexItem) ---
+    let joinSql = '';
+    let orderSql = `"createdAt" ${dir}`; // default
+
     if (orderKey !== 'createdAt' && orderableKeys.includes(orderKey) && IDENT_SAFE.test(orderKey)) {
       const kType = typeByKey[orderKey];
+
       if (kType === 'date' || kType === 'datetime') {
         orderSql = `(payload->>'${orderKey}')::timestamptz ${dir}, "createdAt" DESC`;
+      } else if (kType === 'kardexItem') {
+        // Sort by KardexItem.nameFa when present; otherwise by the stored code
+        joinSql = `LEFT JOIN "KardexItem" AS ki__ord ON ki__ord."code" = payload->>'${orderKey}'`;
+        orderSql = `COALESCE(ki__ord."nameFa", payload->>'${orderKey}') ${dir}, "createdAt" DESC`;
       } else {
+        // lexical sort on the string value
         orderSql = `COALESCE(NULLIF(payload->>'${orderKey}', ''), '') ${dir}, "createdAt" DESC`;
       }
     }
@@ -231,14 +238,18 @@ for (const k of filterableKeys) {
       { id: string; createdAt: Date; status: string; payload: any }[]
     >(
       `
-        SELECT id, "createdAt", status, payload
-        FROM "FormEntry"
-        WHERE ${whereSql}
+        SELECT fe.id, fe."createdAt", fe.status, fe.payload
+        FROM "FormEntry" AS fe
+        ${joinSql}
+        WHERE ${whereSql.replaceAll(`"FormId"`, `fe."FormId"`).replaceAll(`"formId"`, `fe."formId"`)}
         ORDER BY ${orderSql}
         LIMIT $${params.length - 1} OFFSET $${params.length}
       `,
       ...params
     );
+
+    //console.log(whereSql);
+    //console.log(params);
 
     // Kardex display maps (code -> "nameFa – code")
     const kardexKeys = form.fields.filter(f => f.type === 'kardexItem').map(f => f.key);
@@ -265,34 +276,23 @@ for (const k of filterableKeys) {
       }
     }
 
-    // after computing whereSql, params, total, rows...
-const isDebug = new URL(req.url).searchParams.get('debug') === '1';
+    // Optional debug echo
+    const isDebug = new URL(req.url).searchParams.get('debug') === '1';
 
-return NextResponse.json({
-  ok: true,
-  meta: {
-    formCode: form.code,
-    titleFa: form.titleFa,
-    page, pageSize, total,
-    visibleColumns, filterableKeys, orderableKeys, defaultOrder, 
-    orderApplied: orderKey === 'createdAt' ? 'createdAt' : orderKey,
-  },
-  labels,
-  rows,
-  displayMaps,
-  schema,
-  ...(isDebug ? {
-  __debug: {
-    whereSql,
-    params,
-    filterParams: {
-      from: url.searchParams.get('filter_rasid_datetime_from'),
-      to:   url.searchParams.get('filter_rasid_datetime_to'),
-    }
-  }
-} : {})
-});
-
+    return NextResponse.json({
+      ok: true,
+      meta: {
+        formCode: form.code,
+        titleFa: form.titleFa,
+        page, pageSize, total,
+        visibleColumns, filterableKeys, orderableKeys, defaultOrder,
+        orderApplied: orderKey === 'createdAt' ? 'createdAt' : orderKey,
+      },
+      labels,
+      rows,
+      displayMaps,
+      schema,
+    });
   } catch (err: any) {
     console.error('REPORT ENTRIES API ERROR:', err);
     return NextResponse.json({ ok: false, message: 'خطای سرور' }, { status: 500 });

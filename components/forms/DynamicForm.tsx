@@ -6,6 +6,7 @@ import { isLtrField, optionLabel } from '@/lib/forms/field-utils';
 import KardexPicker from './KardexPicker';
 import JDatePicker from '@/components/ui/JDatePicker';
 import JDateTimePicker from '@/components/ui/JDateTimePicker';
+import TableSelectInput from './inputs/TableSelectInput';
 
 type Props = {
   form: Pick<Form, 'code'|'titleFa'>;
@@ -213,6 +214,17 @@ export default function DynamicForm({ form, fields }: Props) {
                   }}
                 />
               )}
+
+              {/* tableSelect */}
+              {f.type === 'tableSelect' && (
+                <TableSelectInput
+                  label={f.labelFa}
+                  value={(values[f.key] as string) ?? ''}
+                  onChange={(val: string) => set(f.key, val)}   // store the selected code
+                  config={(cfg?.tableSelect ?? cfg ?? {}) as { table?: string; type?: string }}
+                />
+              )}
+              {/* Add other field types as needed */}
             </div>
           );
         })}

@@ -13,13 +13,15 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         <aside className="col-span-12 md:col-span-2 self-start md:sticky md:top-6">
           <nav className="space-y-2 rounded-2xl border bg-white p-4">
             <div className="text-sm text-gray-500 text-center mb-2">مدیریت سامانه</div>
-            <Link href="/admin" className="block rounded-md px-3 py-2 hover:bg-gray-50 no-underline">داشبورد</Link>
-            <Link href="/admin/users" className="block rounded-md px-3 py-2 hover:bg-gray-50 no-underline">کاربران</Link>
-            <Link href="/admin/roles" className="block rounded-md px-3 py-2 hover:bg-gray-50 no-underline">گروه‌ها</Link>
-            <Link href="/admin/forms" className="block rounded-md px-3 py-2 hover:bg-gray-50 no-underline">فرم‌ها</Link>
-            <Link href="/admin/permissions" className="block rounded-md px-3 py-2 hover:bg-gray-50 no-underline">مجوزها</Link>
-            <Link href="/admin/reports" className="block rounded-md px-3 py-2 hover:bg-gray-50 no-underline">گزارش‌ها</Link>
-            <Link href="/admin/report-permissions" className="block rounded-md px-3 py-2 hover:bg-gray-50 no-underline">مجوز گزارش‌ها</Link>
+            <Link href="/admin" className="block rounded-md px-3 py-2 hover:bg-gray-100 no-underline">داشبورد</Link>
+            <Link href="/admin/kardex" className="block rounded-md px-3 py-2 hover:bg-gray-100 no-underline">کارتکس</Link>
+            <Link href="/admin/fixed-info" className="block rounded-md px-3 py-2 hover:bg-gray-100 no-underline">اطلاعات ثابت</Link>
+            <Link href="/admin/users" className="block rounded-md px-3 py-2 hover:bg-gray-100 no-underline">کاربران</Link>
+            <Link href="/admin/roles" className="block rounded-md px-3 py-2 hover:bg-gray-100 no-underline">گروه‌ها</Link>
+            <Link href="/admin/forms" className="block rounded-md px-3 py-2 hover:bg-gray-100 no-underline">فرم‌ها</Link>
+            <Link href="/admin/permissions" className="block rounded-md px-3 py-2 hover:bg-gray-100 no-underline">مجوزها</Link>
+            <Link href="/admin/reports" className="block rounded-md px-3 py-2 hover:bg-gray-100 no-underline">گزارش‌ها</Link>
+            <Link href="/admin/report-permissions" className="block rounded-md px-3 py-2 hover:bg-gray-100 no-underline">مجوز گزارش‌ها</Link>
           </nav>
         </aside>
 

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { requireReportView } from '@/lib/reports-guard';
+import { resolveTable } from '@/lib/tableSelect-sources';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -250,6 +251,39 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
 
     //console.log(whereSql);
     //console.log(params);
+
+
+    // tableSelect display maps (code -> title)
+    const tableSelectFields = form.fields
+      .filter(f => f.type === 'tableSelect' && f.config?.tableSelect?.table && f.config?.tableSelect?.type)
+      .map(f => ({ key: f.key, table: f.config.tableSelect.table as string, type: f.config.tableSelect.type as string }));
+
+    for (const tf of tableSelectFields) {
+      // collect codes from rows
+      const codes = new Set<string>();
+      for (const r of rows) {
+        const v = r.payload?.[tf.key];
+        if (typeof v === 'string' && v) codes.add(v);
+      }
+      if (!codes.size) continue;
+
+      const tableName = resolveTable(tf.table);
+      if (!tableName) continue; // safety
+
+      const items = await prisma.$queryRawUnsafe<{ code: string; title: string }[]>(
+        `
+          SELECT code, title
+          FROM ${tableName}
+          WHERE type = $1 AND code = ANY($2::text[])
+        `,
+        tf.type,
+        Array.from(codes)
+      );
+
+      displayMaps[tf.key] = displayMaps[tf.key] || {};
+      for (const it of items) displayMaps[tf.key][it.code] = it.title;
+    }
+
 
     // Kardex display maps (code -> "nameFa – code")
     const kardexKeys = form.fields.filter(f => f.type === 'kardexItem').map(f => f.key);

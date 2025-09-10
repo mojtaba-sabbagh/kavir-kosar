@@ -6,6 +6,7 @@ import Link from 'next/link';
 import FormsGrid from '@/components/FormsGrid';
 import ReportsSection from '@/components/dashboard/ReportsSection';
 import PendingSection from '@/components/dashboard/PendingSection';
+import AdminQuickLinks from '@/components/dashboard/AdminQuickLinks';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -45,27 +46,10 @@ export default async function HomeProtected() {
 
   return (
     <div className="space-y-10">
-      {/* Greeting (no borders/boxes) */}
-      <div>
-
-        {isAdmin && (
-          <div className="mt-4">
-            <Link
-              href="/admin"
-              className="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-white no-underline hover:bg-blue-700"
-            >
-              مدیریت سامانه
-            </Link>
-            <Link href="/admin/kardex" className="rounded-md border px-3 py-2 hover:bg-gray-50">
-                  کاردکس (مدیریت)
-            </Link>
-          </div>
-        )}
-      </div>
       <PendingSection />
       {/* Forms (blue for Send, gray for Read-only) */}
       <div>
-        <h3 className="text-lg font-semibold mb-4">فرم‌های شما</h3>
+        <h3 className="text-lg font-semibold mb-4">فرم‌ها</h3>
         {forms.length > 0 ? (
           <FormsGrid forms={forms} />
         ) : (

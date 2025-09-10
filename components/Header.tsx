@@ -49,8 +49,17 @@ export default async function Header() {
           </Link>
         </div>
 
-        {/* Right-side nav (bottom on mobile, right on desktop) */}
+        {/* Right-side nav */}
         <nav className="flex items-center gap-4 text-sm">
+          {isAdmin && (
+            <Link
+              href="/admin"
+              className="rounded-md border px-4 py-2 hover:bg-gray-100 transition-colors"
+            >
+              مدیریت
+            </Link>
+          )}
+
           {user ? (
             <div className="flex items-center gap-3">
               <h2 className="text-gray-700 font-medium">

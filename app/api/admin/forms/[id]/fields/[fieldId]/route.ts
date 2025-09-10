@@ -12,7 +12,7 @@ const FieldUpdate = z.object({
   labelFa: z.string().min(1),
   type: z.enum([
     'text','textarea','number','date','datetime','select','multiselect','checkbox','file',
-    'entryRef','entryRefMulti','kardexItem',
+    'entryRef','entryRefMulti','kardexItem', 'tableSelect', 
   ] as const),
   required: z.boolean(),
   order: z.preprocess(v => typeof v==='string'? Number(v): v, z.number().int()),

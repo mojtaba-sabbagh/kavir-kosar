@@ -106,7 +106,9 @@ export async function POST(req: Request) {
   }
 
   // 5) Mirror Form.canRead → Report.canView
-  await syncReportPermsBulk(changes);
+  await syncReportPermsBulk(
+    changes.map(c => ({ roleId: c.roleId, formId: c.formId, canRead: c.canRead }))
+  );
 
   return NextResponse.json({ ok: true });
 }

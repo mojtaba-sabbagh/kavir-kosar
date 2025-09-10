@@ -89,6 +89,7 @@ enum FieldType {
   entryRef // single reference to another FormEntry
   entryRefMulti // multiple references
   kardexItem
+  tableSelect
 }
 
 model FormField {
@@ -222,9 +223,9 @@ model ConfirmationTask {
 }
 
 model FormReport {
-  id     String @id @default(uuid())
-  formId String @unique
-  form   Form   @relation(fields: [formId], references: [id], onDelete: Cascade)
+  id        String   @id @default(uuid())
+  formId    String   @unique
+  form      Form     @relation(fields: [formId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -235,20 +236,20 @@ enum SortDir {
 }
 
 model Report {
-  id        String   @id @default(uuid())
-  code      String   @unique          // e.g. "RPT:FORM:STP-INPUT"
+  id        String @id @default(uuid())
+  code      String @unique // e.g. "RPT:FORM:STP-INPUT"
   titleFa   String
-  sortOrder Int      @default(100)
+  sortOrder Int    @default(100)
 
   // tie to form (one-to-one)
-  formId    String?   @unique
-  form      Form?     @relation(fields: [formId], references: [id], onDelete: Cascade)
-  
+  formId String? @unique
+  form   Form?   @relation(fields: [formId], references: [id], onDelete: Cascade)
+
   rolePermissions RoleReportPermission[]
-  
-  url             String?
-  isActive        Boolean                @default(true)
-  
+
+  url      String?
+  isActive Boolean @default(true)
+
   visibleColumns String[] @default([])
   filterableKeys String[] @default([])
   orderableKeys  String[] @default([])
@@ -257,7 +258,6 @@ model Report {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
-
 
 model RoleReportPermission {
   id       String @id @default(uuid())
@@ -335,4 +335,14 @@ model KardexTxn {
 
   @@unique([entryId]) // idempotency: apply once per entry
   @@index([itemId])
+}
+
+model FixedInformation {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  title       String
+  type        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }

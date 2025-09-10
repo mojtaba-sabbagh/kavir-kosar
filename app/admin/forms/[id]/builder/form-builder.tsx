@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import FormReportConfig, { ReportConfig } from '@/components/reports/FormReportConfig';
+import TableSelectConfigPanel from '@/components/forms/TableSelectConfigPanel';
 
 
 // --- Kardex config panel for 'kardexItem' fields ---
@@ -120,6 +121,7 @@ const FIELD_TYPES = [
   { v: 'entryRef', t: 'ارجاع به فرم' },
   { v: 'entryRefMulti', t: 'ارجاع‌های متعدد' },
   { v: 'kardexItem', t: 'کاردکس کالا' },
+  { v: 'tableSelect', t: 'انتخاب از جدول' },
 ];
 
 export default function FormBuilder({
@@ -221,7 +223,7 @@ export default function FormBuilder({
         </div>
       </div>
 
-      {/* Fields editor (unchanged) */}
+      {/* Fields editor */}
       <div className="rounded-xl border bg-white p-4">
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-semibold">فیلدها</h2>
@@ -395,6 +397,14 @@ export default function FormBuilder({
                   allFields={fields}
                   onChange={(nextConfig) => updateField(idx, { config: nextConfig })}
                 />
+              )}
+
+            {f.type === 'tableSelect' && (
+              <TableSelectConfigPanel
+                field={f}
+                onChange={(nextConfig) => updateField(idx, { config: nextConfig })}
+              />
+              
               )}
 
               <div className="mt-3 text-left">

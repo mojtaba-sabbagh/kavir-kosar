@@ -13,13 +13,17 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
   try {
     const { code: raw } = await ctx.params;
     const decoded = decodeURIComponent(raw || '');
-    const canonical = decoded.toUpperCase();
-    const isAuto = canonical.startsWith('RPT:FORM:');
-    const formCode = isAuto ? canonical.slice('RPT:FORM:'.length) : canonical;
+
+    // Detect auto report without altering case for DB lookups
+    const isAuto = decoded.toUpperCase().startsWith('RPT:FORM:');
+    const formCode = isAuto ? decoded.slice('RPT:FORM:'.length) : decoded;
+
+    // Use uppercase **only** for the permission guard
+    const guardCode = (isAuto ? `RPT:FORM:${formCode}` : formCode).toUpperCase();
 
     // Guard
     try {
-      await requireReportView(canonical);
+      await requireReportView(guardCode);
     } catch (e: any) {
       const msg = e?.message || 'FORBIDDEN';
       const status = msg === 'UNAUTHORIZED' ? 401 : msg === 'NOT_FOUND' ? 404 : 403;
@@ -29,11 +33,11 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
     const url = new URL(req.url);
     const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10));
     const pageSize = Math.min(100, Math.max(5, parseInt(url.searchParams.get('pageSize') || '20', 10)));
-    const text = qp(url, 'q');
-    const orderKey = qp(url, 'order') || 'createdAt';
-    const dir = (qp(url, 'dir') || 'desc').toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+    const text = (url.searchParams.get('q') ?? '').trim();
+    const orderKey = (url.searchParams.get('order') ?? 'createdAt').trim();
+    const dir = ((url.searchParams.get('dir') ?? 'desc').trim().toLowerCase() === 'asc') ? 'ASC' : 'DESC';
 
-    // Load form + schema
+    // IMPORTANT: lookup form by **original-case** code
     const form = await prisma.form.findFirst({
       where: { code: formCode },
       include: {
@@ -44,10 +48,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
         },
       },
     });
-    if (!form) return NextResponse.json({ ok: false, message: 'فرم یافت نشد' }, { status: 404 });
-
-    const typeByKey: Record<string, string> = {};
-    for (const f of form.fields) typeByKey[f.key] = f.type;
+    if (!form) {
+      return NextResponse.json({ ok: false, message: 'فرم یافت نشد' }, { status: 404 });
+    }
 
     const report = await prisma.report.findFirst({ where: { formId: form.id } });
     const visibleColumns: string[] = report?.visibleColumns ?? [];
@@ -55,11 +58,12 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
     const orderableKeys: string[] = report?.orderableKeys ?? [];
     const defaultOrder = (report?.defaultOrder as any) ?? null;
 
-    // Labels
+    // --- helpers built from schema
+    const typeByKey: Record<string, string> = {};
     const labels: Record<string, string> = {};
-    for (const f of form.fields) labels[f.key] = f.labelFa;
+    form.fields.forEach(f => { typeByKey[f.key] = f.type; labels[f.key] = f.labelFa; });
 
-    // Display maps (select/multiselect options)
+    // --- display maps: select/multiselect options
     const displayMaps: Record<string, Record<string, string>> = {};
     for (const f of form.fields) {
       const cfg = (f.config ?? {}) as any;
@@ -72,136 +76,159 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
       }
     }
 
-    // Schema for client
+    // --- schema for client
     const schema = form.fields.map(f => ({
       key: f.key,
       type: f.type,
       config: f.config || {},
     }));
 
-    // ---------- WHERE builder (raw SQL with params) ----------
+    // ---------- WHERE (raw SQL with params) ----------
     const params: any[] = [];
-    let whereSql = `"formId" = $1`;
+    let whereSql = `fe."formId" = $1`;
     params.push(form.id);
 
-    // Collect date/datetime ranges separately so we don't accidentally add ILIKE for _from/_to
+    // collect date/datetime ranges to handle casting cleanly
     const dtRanges: Record<string, { from?: string; to?: string }> = {};
 
+    // immediate filter handling (non-date)
     for (const [rawK, v] of url.searchParams.entries()) {
       if (!rawK.startsWith('filter_')) continue;
       if (!v) continue;
 
-      // ✅ parse key & bound without breaking on inner underscores
-      let key = rawK.slice('filter_'.length); // strip `filter_`
+      let key = rawK.slice('filter_'.length);
       let bound: 'from' | 'to' | undefined;
       if (key.endsWith('_from')) { bound = 'from'; key = key.slice(0, -'_from'.length); }
       else if (key.endsWith('_to')) { bound = 'to'; key = key.slice(0, -'_to'.length); }
 
       if (!key || !IDENT_SAFE.test(key)) continue;
-
       const ftype = typeByKey[key];
 
-      // --- Date / Datetime: collect into dtRanges; skip generic clause
+      // dates are collected for a second pass
       if ((ftype === 'date' || ftype === 'datetime') && bound) {
         dtRanges[key] = dtRanges[key] || {};
         dtRanges[key][bound] = v;
         continue;
       }
 
-      // --- Kardex: translate user text to codes and generate OR equals chain
-      // --- Kardex: translate text -> codes and append an OR-equals group immediately
-    if (ftype === 'kardexItem') {
-      const matches = await prisma.kardexItem.findMany({
-        where: {
-          OR: [
-            { nameFa: { contains: v, mode: 'insensitive' } },
-            { code:   { contains: v, mode: 'insensitive' } },
-          ],
-        },
-        select: { code: true },
-        take: 200,
-      });
-      const codes = [...new Set(matches.map(m => m.code))];
-
-      if (codes.length === 0) {
-        // no match => empty result
-        return NextResponse.json({
-          ok: true,
-          meta: {
-            formCode: form.code, titleFa: form.titleFa,
-            page, pageSize, total: 0,
-            visibleColumns, filterableKeys, orderableKeys, defaultOrder,
-            orderApplied: orderKey === 'createdAt' ? 'createdAt' : orderKey,
+      // kardexItem: search by nameFa/code => OR equals on JSON stored code(s)
+      if (ftype === 'kardexItem') {
+        const matches = await prisma.kardexItem.findMany({
+          where: {
+            OR: [
+              { nameFa: { contains: v, mode: 'insensitive' } },
+              { code:   { contains: v, mode: 'insensitive' } },
+            ],
           },
-          labels, rows: [], displayMaps, schema,
+          select: { code: true },
+          take: 200,
         });
+
+      // tableSelect => equals on the stored code
+      if (ftype === 'tableSelect') {
+        params.push(key, v);
+        whereSql += ` AND payload->>$${params.length - 1} = $${params.length}`;
+        continue;
+      }
+        const codes = [...new Set(matches.map(m => m.code))];
+        if (codes.length === 0) {
+          // short-circuit empty
+          return NextResponse.json({
+            ok: true,
+            meta: {
+              formCode: form.code, titleFa: form.titleFa,
+              page, pageSize, total: 0,
+              visibleColumns, filterableKeys, orderableKeys, defaultOrder,
+              orderApplied: orderKey === 'createdAt' ? 'createdAt' : orderKey,
+            },
+            labels, rows: [], displayMaps, schema,
+          });
+        }
+        // lock key placeholder
+        params.push(key);
+        const keyIdx = params.length;
+        const col = `fe.payload->>$${keyIdx}`;
+        const ors: string[] = [];
+        for (const c of codes) {
+          params.push(c);
+          ors.push(`${col} = $${params.length}`);
+        }
+        whereSql += ` AND (${ors.join(' OR ')})`;
+        continue;
       }
 
-      // Push the JSON path key now and record its index
-      params.push(key);
-      const keyIdx = params.length;                          // ← index for the key
-      const col = `payload->>$${keyIdx}`;
+      // tableSelect: contains by title OR equals by code (user might type code)
+      if (ftype === 'tableSelect') {
+        // try to match titles (requires table/type from config)
+        const ff = form.fields.find(f => f.key === key);
+        const tcfg = (ff?.config as any)?.tableSelect || {};
+        const tableName = resolveTable(tcfg.table);
+        const tType = tcfg.type as string | undefined;
 
-      // Build (col = $idx OR col = $idx ...)
-      const parts: string[] = [];
-      for (const c of codes) {
-        params.push(c);
-        const valIdx = params.length;                        // ← index for this code
-        parts.push(`${col} = $${valIdx}`);
+        if (tableName && tType) {
+          const found = await prisma.$queryRawUnsafe<{ code: string }[]>(
+            `
+              SELECT code
+              FROM ${tableName}
+              WHERE type = $1 AND (title ILIKE $2 OR code ILIKE $2)
+              LIMIT 200
+            `,
+            tType,
+            `%${v}%`
+          );
+          const codes = [...new Set(found.map(r => r.code))];
+          params.push(key);
+          const keyIdx = params.length;
+          const col = `fe.payload->>$${keyIdx}`;
+          if (codes.length) {
+            const ors: string[] = [];
+            for (const c of codes) { params.push(c); ors.push(`${col} = $${params.length}`); }
+            // also allow the raw text to equal code directly
+            params.push(v);
+            ors.push(`${col} = $${params.length}`);
+            whereSql += ` AND (${ors.join(' OR ')})`;
+          } else {
+            // fallback to contains on JSON string
+            params.push(`%${v}%`);
+            whereSql += ` AND ${col} ILIKE $${params.length}`;
+          }
+          continue;
+        }
       }
-      whereSql += ` AND (${parts.join(' OR ')})`;
-      continue;
+
+      // generic contains on JSON text
+      params.push(key, `%${v}%`);
+      whereSql += ` AND fe.payload->>$${params.length - 1} ILIKE $${params.length}`;
     }
 
-
-  // --- Generic (non-date) contains on JSON text
-  params.push(key, `%${v}%`);
-  whereSql += ` AND payload->>$${params.length - 1} ILIKE $${params.length}`;
-}
-
-
-    // 2) Apply date/datetime ranges in a dedicated pass
+    // date/datetime ranges pass (casted)
     for (const [k, range] of Object.entries(dtRanges)) {
       const t = typeByKey[k];
       if (!t) continue;
-
-      // Lock placeholder for JSON key
       params.push(k);
       const keyIdx = params.length;
 
       if (t === 'date') {
-        const col = `(payload->>$${keyIdx})::date`;
-        if (range.from) {
-          params.push(range.from.slice(0, 10));
-          whereSql += ` AND ${col} >= $${params.length}::date`;
-        }
-        if (range.to) {
-          params.push(range.to.slice(0, 10));
-          whereSql += ` AND ${col} <= $${params.length}::date`;
-        }
+        const col = `(fe.payload->>$${keyIdx})::date`;
+        if (range.from) { params.push(range.from.slice(0, 10)); whereSql += ` AND ${col} >= $${params.length}::date`; }
+        if (range.to)   { params.push(range.to.slice(0, 10));   whereSql += ` AND ${col} <= $${params.length}::date`; }
       } else {
-        const col = `(payload->>$${keyIdx})::timestamptz`;
-        if (range.from) {
-          params.push(range.from);
-          whereSql += ` AND ${col} >= $${params.length}::timestamptz`;
-        }
-        if (range.to) {
-          params.push(range.to);
-          whereSql += ` AND ${col} <= $${params.length}::timestamptz`;
-        }
+        const col = `(fe.payload->>$${keyIdx})::timestamptz`;
+        if (range.from) { params.push(range.from); whereSql += ` AND ${col} >= $${params.length}::timestamptz`; }
+        if (range.to)   { params.push(range.to);   whereSql += ` AND ${col} <= $${params.length}::timestamptz`; }
       }
     }
 
-    // 3) Optional global text across filterableKeys
+    // optional global text over filterableKeys (text-ish)
     if (text && filterableKeys.length) {
       const ors: string[] = [];
       for (const k of filterableKeys) {
         if (!IDENT_SAFE.test(k)) continue;
         const t = typeByKey[k] || 'text';
-        if (t === 'text' || t === 'textarea' || t === 'select' || t === 'kardexItem') {
+        if (t === 'text' || t === 'textarea' || t === 'select' || t === 'kardexItem' || t === 'tableSelect') {
           params.push(k);
           params.push(`%${text}%`);
-          ors.push(`payload->>$${params.length - 1} ILIKE $${params.length}`);
+          ors.push(`fe.payload->>$${params.length - 1} ILIKE $${params.length}`);
         }
       }
       if (ors.length) whereSql += ` AND (${ors.join(' OR ')})`;
@@ -209,31 +236,40 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
 
     // ---------- COUNT ----------
     const countRows = await prisma.$queryRawUnsafe<{ count: string }[]>(
-      `SELECT COUNT(*)::text AS count FROM "FormEntry" WHERE ${whereSql}`,
+      `SELECT COUNT(*)::text AS count FROM "FormEntry" AS fe WHERE ${whereSql}`,
       ...params
     );
     const total = parseInt(countRows?.[0]?.count || '0', 10);
 
-    // --- ORDER BY (and an optional JOIN when ordering by kardexItem) ---
+    // ---------- ORDER BY (+ optional JOINs for label-based sorts) ----------
     let joinSql = '';
-    let orderSql = `"createdAt" ${dir}`; // default
+    let orderSql = `fe."createdAt" ${dir}`;
 
     if (orderKey !== 'createdAt' && orderableKeys.includes(orderKey) && IDENT_SAFE.test(orderKey)) {
       const kType = typeByKey[orderKey];
 
       if (kType === 'date' || kType === 'datetime') {
-        orderSql = `(payload->>'${orderKey}')::timestamptz ${dir}, "createdAt" DESC`;
+        orderSql = `(fe.payload->>'${orderKey}')::timestamptz ${dir}, fe."createdAt" DESC`;
       } else if (kType === 'kardexItem') {
-        // Sort by KardexItem.nameFa when present; otherwise by the stored code
-        joinSql = `LEFT JOIN "KardexItem" AS ki__ord ON ki__ord."code" = payload->>'${orderKey}'`;
-        orderSql = `COALESCE(ki__ord."nameFa", payload->>'${orderKey}') ${dir}, "createdAt" DESC`;
+        joinSql += ` LEFT JOIN "KardexItem" AS ki__ord ON ki__ord."code" = fe.payload->>'${orderKey}'`;
+        orderSql = `COALESCE(ki__ord."nameFa", fe.payload->>'${orderKey}') ${dir}, fe."createdAt" DESC`;
+      } else if (kType === 'tableSelect') {
+        const ff = form.fields.find(f => f.key === orderKey);
+        const tcfg = (ff?.config as any)?.tableSelect || {};
+        const tableName = resolveTable(tcfg.table);
+        const alias = `ts__ord`;
+        if (tableName) {
+          joinSql += ` LEFT JOIN ${tableName} AS ${alias} ON ${alias}."code" = fe.payload->>'${orderKey}'`;
+          orderSql = `COALESCE(${alias}."title", fe.payload->>'${orderKey}') ${dir}, fe."createdAt" DESC`;
+        } else {
+          orderSql = `COALESCE(NULLIF(fe.payload->>'${orderKey}', ''), '') ${dir}, fe."createdAt" DESC`;
+        }
       } else {
-        // lexical sort on the string value
-        orderSql = `COALESCE(NULLIF(payload->>'${orderKey}', ''), '') ${dir}, "createdAt" DESC`;
+        orderSql = `COALESCE(NULLIF(fe.payload->>'${orderKey}', ''), '') ${dir}, fe."createdAt" DESC`;
       }
     }
 
-    // --- Page + Select ---
+    // ---------- PAGE + SELECT ----------
     params.push(pageSize, (page - 1) * pageSize);
     const rows = await prisma.$queryRawUnsafe<
       { id: string; createdAt: Date; status: string; payload: any }[]
@@ -242,24 +278,19 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
         SELECT fe.id, fe."createdAt", fe.status, fe.payload
         FROM "FormEntry" AS fe
         ${joinSql}
-        WHERE ${whereSql.replaceAll(`"FormId"`, `fe."FormId"`).replaceAll(`"formId"`, `fe."formId"`)}
+        WHERE ${whereSql}
         ORDER BY ${orderSql}
         LIMIT $${params.length - 1} OFFSET $${params.length}
       `,
       ...params
     );
 
-    //console.log(whereSql);
-    //console.log(params);
-
-
-    // tableSelect display maps (code -> title)
+    // ---------- display maps for tableSelect (code -> title) ----------
     const tableSelectFields = form.fields
-      .filter(f => f.type === 'tableSelect' && f.config?.tableSelect?.table && f.config?.tableSelect?.type)
-      .map(f => ({ key: f.key, table: f.config.tableSelect.table as string, type: f.config.tableSelect.type as string }));
+      .filter(f => f.type === 'tableSelect' && (f.config as any)?.tableSelect?.table && (f.config as any)?.tableSelect?.type)
+      .map(f => ({ key: f.key, table: (f.config as any).tableSelect.table as string, type: (f.config as any).tableSelect.type as string }));
 
     for (const tf of tableSelectFields) {
-      // collect codes from rows
       const codes = new Set<string>();
       for (const r of rows) {
         const v = r.payload?.[tf.key];
@@ -268,7 +299,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
       if (!codes.size) continue;
 
       const tableName = resolveTable(tf.table);
-      if (!tableName) continue; // safety
+      if (!tableName) continue;
 
       const items = await prisma.$queryRawUnsafe<{ code: string; title: string }[]>(
         `
@@ -284,8 +315,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
       for (const it of items) displayMaps[tf.key][it.code] = it.title;
     }
 
-
-    // Kardex display maps (code -> "nameFa – code")
+    // ---------- display maps for kardexItem (code -> "nameFa – code") ----------
     const kardexKeys = form.fields.filter(f => f.type === 'kardexItem').map(f => f.key);
     if (kardexKeys.length && rows.length) {
       const codes = new Set<string>();
@@ -309,9 +339,6 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
         }
       }
     }
-
-    // Optional debug echo
-    const isDebug = new URL(req.url).searchParams.get('debug') === '1';
 
     return NextResponse.json({
       ok: true,

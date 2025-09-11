@@ -1,30 +1,26 @@
-import { notFound } from 'next/navigation';
-import { requireReportView } from '@/lib/reports-guard';
-
-export const dynamic = 'force-dynamic';
-export const revalidate = 0;
+// app/(protected)/reports/[code]/page.tsx
+import { redirect, notFound } from 'next/navigation';
+import { canReadReport } from '@/lib/reports';
+import { prisma } from '@/lib/db';
 
 export default async function ReportByCode(props: { params: Promise<{ code: string }> }) {
   const { code: raw } = await props.params;
-
-  // decode + canonicalize
   const decoded = decodeURIComponent(raw || '');
-  const canonical = decoded.toUpperCase();
 
-  // If it's an auto-report like RPT:FORM:STP-INPUT, extract the form code
-  const isAuto = canonical.startsWith('RPT:FORM:');
-  const formCode = isAuto ? canonical.slice('RPT:FORM:'.length) : canonical;
-
-  // Guard (accepts form code or auto-report code)
-  try {
-    await requireReportView(canonical); // checks RoleReportPermission.canView
-  } catch (e: any) {
-    if (e?.message === 'NOT_FOUND') notFound();
-    return <div className="text-red-600">دسترسی غیرمجاز</div>;
+  // Redirect bare form code to canonical report code if needed
+  if (!/^RPT:/i.test(decoded)) {
+    const rep = await prisma.report.findFirst({
+      where: { code: { equals: `RPT:FORM:${decoded}`, mode: 'insensitive' } },
+      select: { code: true },
+    });
+    if (rep?.code) redirect(`/reports/${encodeURIComponent(rep.code)}`);
   }
 
-  // Built-in Kardex report
-  if (formCode === 'KARDEX') {
+  const ok = await canReadReport(decoded);
+  if (!ok) return <div className="text-red-600">دسترسی غیرمجاز</div>;
+
+  // KARDEX special
+  if (/^KARDEX$/i.test(decoded)) {
     const Comp = (await import('../kardex/report-client')).default;
     return (
       <div className="space-y-4">
@@ -34,12 +30,12 @@ export default async function ReportByCode(props: { params: Promise<{ code: stri
     );
   }
 
-  // Generic per-form report renderer (you can customize later)
-  const GenericReport = (await import('../generic/form-report-client')).default;
+  // Generic
+  const Generic = (await import('../generic/form-report-client')).default;
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-bold">گزارش فرم {formCode}</h1>
-      <GenericReport code={formCode} />
+      <h1 className="text-xl font-bold">گزارش فرم</h1>
+      <Generic code={decoded} />
     </div>
   );
 }

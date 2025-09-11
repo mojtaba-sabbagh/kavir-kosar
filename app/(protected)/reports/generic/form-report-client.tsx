@@ -85,9 +85,10 @@ useEffect(() => {
       if (!cancel) {
         setMeta(j.meta);
         setLabels(j.labels || {});
-        setRows(j.rows || []);
-        setDisplayMaps(j.displayMaps || {});
-        setSchema(j.schema || {});
+        setRows(Array.isArray(j.rows) ? j.rows : []);
+        setDisplayMaps(j.displayMaps && typeof j.displayMaps === 'object' ? j.displayMaps : {});
+        setSchema(Array.isArray(j.schema) ? j.schema : []);  // 👈 important
+
 
         // Initialize order ONLY ONCE from server-provided defaults
         if (!didInitOrder.current) {
@@ -107,22 +108,20 @@ useEffect(() => {
   return () => { cancel = true; };
 }, [code, qs]);
 
+  const schemaArr = Array.isArray(schema) ? schema : [];   // 👈 normalize once
   // Build map key->type
   const typeByKey = useMemo(() => {
-    const m: Record<string, string> = {};
-    schema.forEach(f => {
-      m[f.key] = f.type;
-    });
-    return m;
-  }, [schema]);
+  const m: Record<string, string> = {};
+  schemaArr.forEach(f => { m[f.key] = f.type; });
+  return m;
+}, [schemaArr]);
 
-  // Decide visible columns
-  const visible = useMemo(() => {
-    if (meta?.visibleColumns?.length) return meta.visibleColumns;
-    if (schema.length) return schema.map(f => f.key);
-    if (rows[0]?.payload) return Object.keys(rows[0].payload);
-    return [];
-  }, [meta, schema, rows]);
+const visible = useMemo(() => {
+  if (meta?.visibleColumns?.length) return meta.visibleColumns;
+  if (schemaArr.length) return schemaArr.map(f => f.key);
+  if (rows[0]?.payload) return Object.keys(rows[0].payload);
+  return [];
+}, [meta, schemaArr, rows]);
 
   // Format persian date
   function formatJalali(dateLike: string | number | Date, withTime = false) {
@@ -169,32 +168,50 @@ useEffect(() => {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3" dir="rtl">
             {meta.filterableKeys.map((k) => {
               const label = labels[k] || k;
-              const t = schema.find(s => s.key === k)?.type || 'text';
+              const field = schema.find(s => s.key === k);
+              const t = field?.type || 'text';
               const v = filters[k];
 
-              if (t === 'date') {
+              // --- tableSelect: select populated by configured table/type ---
+              if (t === 'tableSelect' && field?.config?.tableSelect?.type && field?.config?.tableSelect) {
+                const ts = field.config.tableSelect;
                 return (
-                  <JDateRangeFilter
+                  <TableSelectFilter
                     key={k}
                     label={label}
-                    value={v}
-                    onChange={(nv) => setFilters(prev => ({ ...prev, [k]: nv }))}
+                    table={ts.table ?? 'fixedInformation'} // default if you always use FixedInformation
+                    type={ts.type}
+                    value={typeof v === 'string' ? v : ''}
+                    onChange={(code) => setFilters(prev => ({ ...prev, [k]: code }))}
                   />
+                );
+              }
+
+              // --- date / datetime: range pickers (your JDate/JDateTime components if used) ---
+              if (t === 'date') {
+                return (
+                  <div key={k} className="space-y-1 overflow-visible">
+                    <div className="text-xs text-gray-600">{label}</div>
+                    <JDateRangeFilter
+                      value={v || {}}
+                      onChange={(nv) => setFilters(prev => ({ ...prev, [k]: nv }))}
+                    />
+                  </div>
                 );
               }
 
               if (t === 'datetime') {
                 return (
-                  <JDateTimeRangeFilter
-                    key={k}
-                    label={label}
-                    value={v}
-                    onChange={(nv) => setFilters(prev => ({ ...prev, [k]: nv }))}
-                  />
+                  <div key={k} className="space-y-1 overflow-visible">
+                    <div className="text-xs text-gray-600">{label}</div>
+                    <JDateTimeRangeFilter
+                      value={v || {}}
+                      onChange={(nv) => setFilters(prev => ({ ...prev, [k]: nv }))}
+                    />
+                  </div>
                 );
               }
-
-              // text/select/kardexItem -> plain input filter (server does contains/normalize)
+              // --- default text filter ---
               return (
                 <div key={k} className="space-y-1">
                   <label className="text-xs text-gray-600 block">{label}</label>
@@ -210,6 +227,7 @@ useEffect(() => {
             })}
           </div>
         ) : null}
+
 
         {/* Ordering */}
         <div className="flex flex-wrap items-center gap-3" dir="rtl">
@@ -304,4 +322,71 @@ function statusFa(s: string) {
     default:
       return s;
   }
+}
+
+// inside form-report-client.tsx (same file)
+
+function TableSelectFilter({
+  label,
+  table,
+  type,
+  value,
+  onChange,
+}: {
+  label: string;
+  table: string;
+  type: string;
+  value?: string;
+  onChange: (v: string) => void;
+}) {
+  const [opts, setOpts] = useState<{code:string; title:string}[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string|null>(null);
+
+  useEffect(() => {
+  let cancel = false;
+  (async () => {
+    setLoading(true); setErr(null);
+    try {
+      const url = `/api/table-select?table=${encodeURIComponent(table)}&type=${encodeURIComponent(type)}&limit=200`;
+      const r = await fetch(url, { cache: 'no-store' });
+      const j = await r.json();
+
+      // Accept either: { items: [{code,title}] } OR { options: [{value,label}] }
+      const raw = Array.isArray(j?.items) ? j.items
+               : Array.isArray(j?.options) ? j.options
+               : [];
+
+      const normalized = raw.map((it: any) => ({
+        code:  it.code  ?? it.value ?? '',
+        title: it.title ?? it.label ?? '',
+      })).filter(x => x.code && x.title);
+
+      if (!cancel) setOpts(normalized);
+    } catch (e:any) {
+      if (!cancel) setErr(e?.message || 'خطا در بارگذاری گزینه‌ها');
+    } finally {
+      if (!cancel) setLoading(false);
+    }
+  })();
+  return () => { cancel = true; };
+}, [table, type]);
+
+
+  return (
+    <div className="space-y-1">
+      <label className="text-xs text-gray-600 block">{label}</label>
+      <select
+        className="w-full border rounded-md px-2 py-1"
+        value={value ?? ''}
+        onChange={e => onChange(e.target.value)}
+      >
+        <option value="">{loading ? 'در حال بارگذاری…' : '— انتخاب کنید —'}</option>
+        {opts.map(o => (
+          <option key={o.code} value={o.code}>{o.title}</option>
+        ))}
+      </select>
+      {err && <div className="text-xs text-red-600">{err}</div>}
+    </div>
+  );
 }

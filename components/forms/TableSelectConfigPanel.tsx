@@ -10,7 +10,7 @@ type BuilderField = {
   config?: any;
 };
 
-export default function TableSelectConfigPanel({
+export default function ctConfigPanel({
   field,
   onChange,
 }: {
@@ -18,12 +18,12 @@ export default function TableSelectConfigPanel({
   onChange: (nextConfig: any) => void;
 }) {
   const cfg = field.config ?? {};
-  const tcfg = cfg.tableSelect ?? {};
+  const tcfg = cfg.ct ?? {};
   const tableName = tcfg.table ?? 'FixedInformation'; // default to your fixtures table
   const type = tcfg.type ?? '';
 
   const setCfg = (patch: Partial<typeof tcfg>) => {
-    onChange({ ...cfg, tableSelect: { ...tcfg, ...patch } });
+    onChange({ ...cfg, ct: { ...tcfg, ...patch } });
   };
 
   return (

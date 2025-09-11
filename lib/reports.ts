@@ -1,75 +1,71 @@
-// lib/reports.ts
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 
+// keep (or add) this helper
+async function isAdmin(userId: string) {
+  const c = await prisma.userRole.count({
+    where: { userId, role: { name: 'admin' } },
+  });
+  return c > 0;
+}
+
+// already added earlier
 export async function canReadReport(code: string) {
   const user = await getSession();
-  if (!user) return false;
+  if (!user?.id) return false;
 
-  // 1) find roleIds for this user
-  const userRoles = await prisma.userRole.findMany({
-    where: { userId: user.id },
-    select: { roleId: true },
+  const report = await prisma.report.findFirst({
+    where: { code: { equals: code, mode: 'insensitive' }, isActive: true },
+    select: { id: true },
   });
-  const roleIds = userRoles.map(r => r.roleId);
-  if (roleIds.length === 0) return false;
+  if (!report) return false;
 
-  // 2) check permission via RoleReportPermission.canView
-  const count = await prisma.roleReportPermission.count({
+  if (await isAdmin(user.id)) return true;
+
+  const ok = await prisma.roleReportPermission.count({
     where: {
-      roleId: { in: roleIds },
-      canView: true,               // <-- schema uses canView
-      report: { code },            // ensure it’s the requested report
+      reportId: report.id,
+      canView: true,
+      role: { userRoles: { some: { userId: user.id } } },
     },
   });
-  return count > 0;
+
+  return ok > 0;
 }
 
-export async function requireReportRead(code: string) {
-  const ok = await canReadReport(code);
-  if (!ok) {
-    const err = new Error('UNAUTHORIZED');
-    (err as any).code = 403;
-    throw err;
-  }
-}
-
+// ✅ NEW: list reports the current user can view (for dashboard)
 export async function listReadableReports() {
   const user = await getSession();
-  if (!user) return [];
+  if (!user?.id) return [];
 
-  // 1) roleIds
-  const userRoles = await prisma.userRole.findMany({
-    where: { userId: user.id },
-    select: { roleId: true },
-  });
-  const roleIds = userRoles.map(r => r.roleId);
-  if (roleIds.length === 0) return [];
+  const baseSelect = {
+    id: true,
+    code: true,
+    titleFa: true,
+    sortOrder: true,
+  } as const;
 
-  // 2) fetch distinct reports for these roles where canView = true
-  const perms = await prisma.roleReportPermission.findMany({
-    where: {
-      roleId: { in: roleIds },
-      canView: true,            // <-- use canView
-    },
-    select: {
-      report: { select: { id: true, code: true, titleFa: true, sortOrder: true } },
-    },
-    orderBy: [
-      { report: { sortOrder: 'asc' } },
-      { report: { titleFa: 'asc' } },
-    ],
-  });
-
-  // Deduplicate by report.id
-  const seen = new Set<string>();
-  const reports: { id: string; code: string; titleFa: string; sortOrder: number | null }[] = [];
-  for (const p of perms) {
-    const r = p.report;
-    if (!r) continue;
-    if (seen.has(r.id)) continue;
-    seen.add(r.id);
-    reports.push(r);
+  // Admin sees all active reports
+  if (await isAdmin(user.id)) {
+    return prisma.report.findMany({
+      where: { isActive: true },
+      select: baseSelect,
+      orderBy: [{ sortOrder: 'asc' }, { titleFa: 'asc' }],
+    });
   }
-  return reports;
+
+  // Others: only reports granted via role memberships
+  return prisma.report.findMany({
+    where: {
+      isActive: true,
+      rolePermissions: {
+        some: {
+          canView: true,
+          role: { userRoles: { some: { userId: user.id } } },
+        },
+      },
+    },
+    select: baseSelect,
+    orderBy: [{ sortOrder: 'asc' }, { titleFa: 'asc' }],
+  });
 }

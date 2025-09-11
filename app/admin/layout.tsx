@@ -19,7 +19,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             <Link href="/admin/users" className="block rounded-md px-3 py-2 hover:bg-gray-100 no-underline">کاربران</Link>
             <Link href="/admin/roles" className="block rounded-md px-3 py-2 hover:bg-gray-100 no-underline">گروه‌ها</Link>
             <Link href="/admin/forms" className="block rounded-md px-3 py-2 hover:bg-gray-100 no-underline">فرم‌ها</Link>
-            <Link href="/admin/permissions" className="block rounded-md px-3 py-2 hover:bg-gray-100 no-underline">مجوزها</Link>
+            <Link href="/admin/permissions" className="block rounded-md px-3 py-2 hover:bg-gray-100 no-underline">مجوز فرم‌ها</Link>
             <Link href="/admin/reports" className="block rounded-md px-3 py-2 hover:bg-gray-100 no-underline">گزارش‌ها</Link>
             <Link href="/admin/report-permissions" className="block rounded-md px-3 py-2 hover:bg-gray-100 no-underline">مجوز گزارش‌ها</Link>
           </nav>

@@ -38,40 +38,72 @@ export default function ReportsPermEditor({ roles, reports, perms }:{
   };
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-right text-gray-500">
-            <th className="py-2 w-40">نقش \\ گزارش</th>
-            {reports.map(r => <th key={r.id} className="py-2 whitespace-nowrap">{r.titleFa}</th>)}
-          </tr>
-        </thead>
-        <tbody>
-          {roles.map(role => (
-            <tr key={role.id} className="border-t">
-              <td className="py-2 font-medium">{role.name}</td>
-              {reports.map(rep => {
-                const k = `${role.id}:${rep.id}`;
-                return (
-                  <td key={k} className="py-2 text-center">
-                    <label className="inline-flex items-center gap-2">
-                      <input type="checkbox" checked={!!matrix[k]} onChange={() => toggle(role.id, rep.id)} />
-                      <span>دسترسی</span>
-                    </label>
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="relative" dir="rtl">
+      {/* Sticky Save Button */}
+      <div className="sticky top-0 z-20 bg-white border-b border-gray-200 p-4 shadow-sm">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={save}
+            disabled={saving}
+            className="rounded-md bg-gray-900 text-white px-4 py-2 disabled:opacity-50 hover:bg-gray-800 transition-colors"
+          >
+            {saving ? 'در حال ذخیره…' : 'ذخیره'}
+          </button>
+          {ok === true && <span className="text-green-600 text-xs">ذخیره شد</span>}
+          {ok === false && <span className="text-red-600 text-xs">خطا در ذخیره</span>}
+        </div>
+      </div>
 
-      <div className="mt-4 flex items-center gap-3">
-        <button onClick={save} disabled={saving} className="rounded-md bg-gray-900 text-white px-4 py-2 disabled:opacity-50">
-          {saving ? 'در حال ذخیره…' : 'ذخیره'}
-        </button>
-        {ok === true && <span className="text-green-600 text-xs">ذخیره شد</span>}
-        {ok === false && <span className="text-red-600 text-xs">خطا در ذخیره</span>}
+      {/* Table Container */}
+      <div className="overflow-x-auto relative">
+        <table className="w-full text-sm border-collapse">
+          <thead>
+            <tr className="text-center text-gray-500 bg-gray-50">
+              {/* Sticky Header Cell for Report Column */}
+              <th className="sticky right-0 z-10 p-2 w-40 bg-gray-50 border-b border-gray-200 text-right font-semibold">
+                گزارش / نقش
+              </th>
+              {roles.map(r => (
+                <th key={r.id} className="p-2 whitespace-nowrap border-b border-gray-200 border-r min-w-[150px]">
+                  <div className="font-semibold text-gray-700">{r.name}</div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {reports.map((rep, index) => (
+              <tr key={rep.id} className={`${index % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'} hover:bg-blue-50/30 transition-colors border-t`}>
+                {/* Sticky Cell for Report Title */}
+                <td
+                  className={`sticky right-0 z-10 p-2 font-medium whitespace-nowrap border-b border-gray-100 shadow-sm`}
+                  style={{
+                      backgroundColor: index % 2 === 0 ? 'rgba(255, 255, 255, 0.95)' : 'rgba(249, 250, 251, 0.9)', // White or Gray-50/50 with transparency
+                  }}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-800">{rep.titleFa}</span>
+                  </div>
+                </td>
+                {roles.map(role => {
+                  const k = `${role.id}:${rep.id}`;
+                  return (
+                    <td key={k} className="p-2 text-center border-r border-b border-gray-100">
+                      <label className="inline-flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={!!matrix[k]}
+                          onChange={() => toggle(role.id, rep.id)}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <span className="text-sm text-gray-700">دسترسی</span>
+                      </label>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );

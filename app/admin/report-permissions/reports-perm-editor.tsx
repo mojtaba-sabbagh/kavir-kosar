@@ -60,7 +60,7 @@ export default function ReportsPermEditor({ roles, reports, perms }:{
           <thead>
             <tr className="text-center text-gray-500 bg-gray-50">
               {/* Sticky Header Cell for Report Column */}
-              <th className="sticky right-0 z-10 p-2 w-40 bg-gray-50 border-b border-gray-200 text-right font-semibold">
+              <th className="sticky top-0 right-0 z-10 p-2 w-40 bg-gray-50 border-b border-gray-200 text-right font-semibold">
                 گزارش / نقش
               </th>
               {roles.map(r => (

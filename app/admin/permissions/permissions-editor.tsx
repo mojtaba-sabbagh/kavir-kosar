@@ -157,7 +157,7 @@ const onToggle = (
         <tr className="text-center text-gray-500 bg-gray-50">
           {/* Sticky Header Cell with RGBA Transparency */}
           <th
-            className="sticky right-0 z-10 p-3 w-40 border-b border-gray-200 text-right font-semibold"
+            className="sticky top-0 right-0 z-10 p-3 w-40 border-b border-gray-200 text-right font-semibold"
             style={{ backgroundColor: 'rgba(249, 250, 251, 0.8)' }} // Gray-50 with 80% opacity
           >
             فرم / نقش

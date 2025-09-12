@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import FormReportConfig, { ReportConfig } from '@/components/reports/FormReportConfig';
 import TableSelectConfigPanel from '@/components/forms/TableSelectConfigPanel';
 
-
+type AllFormLite = { code: string; titleFa: string };
 // --- Kardex config panel for 'kardexItem' fields ---
 type BuilderField = {
   id?: string;
@@ -128,10 +128,12 @@ export default function FormBuilder({
   form: initialForm,
   fields: initialFields,
   initialReportConfig,
+  allForms,
 }:{
   form: FormInfo;
   fields: Field[];
   initialReportConfig: ReportConfig;
+  allForms: AllFormLite[];
 }) {
   const [form, setForm] = useState(initialForm);
   const [fields, setFields] = useState<Field[]>(initialFields);
@@ -356,41 +358,36 @@ export default function FormBuilder({
               )}
 
               {['entryRef', 'entryRefMulti'].includes(f.type) && (
-                <div className="mt-3">
-                  <label className="block text-sm mb-1">
-                    محدود به کد فرم‌ها (اختیاری، جدا با ,)
-                  </label>
-                  <input
-                    className="w-full border rounded-md px-3 py-2 font-mono"
-                    dir="ltr"
-                    value={(f.config?.allowedFormCodes ?? []).join(',')}
-                    onChange={(e) =>
-                      updateField(idx, {
-                        config: {
-                          ...f.config,
-                          allowedFormCodes: e.target.value
-                            .split(',')
-                            .map((s) => s.trim())
-                            .filter(Boolean),
-                        },
-                      })
-                    }
-                  />
-                  <label className="block text-sm mt-2 mb-1">
-                    برچسب رابطه (اختیاری)
-                  </label>
+                <div className="mt-3 space-y-2">
+                  <label className="block text-sm">فرم‌های مجاز برای ارجاع</label>
+
+                  <select
+                    multiple
+                    className="w-full border rounded-md px-3 py-2"
+                    dir="rtl"
+                    value={Array.isArray(f.config?.allowedFormCodes) ? f.config.allowedFormCodes : []}
+                    onChange={(e) => {
+                      const selected = Array.from(e.target.selectedOptions).map(o => o.value);
+                      updateField(idx, { config: { ...(f.config ?? {}), allowedFormCodes: selected } });
+                    }}
+                  >
+                    {allForms.map(af => (
+                      <option key={af.code} value={af.code}>
+                        {af.titleFa} ({af.code})
+                      </option>
+                    ))}
+                  </select>
+
+                  <label className="block text-sm mt-2 mb-1">برچسب رابطه (اختیاری)</label>
                   <input
                     className="w-full border rounded-md px-3 py-2"
                     value={f.config?.relation ?? ''}
                     onChange={(e) =>
-                      updateField(idx, {
-                        config: { ...f.config, relation: e.target.value },
-                      })
+                      updateField(idx, { config: { ...(f.config ?? {}), relation: e.target.value } })
                     }
                   />
                 </div>
               )}
-
               {f.type === 'kardexItem' && (
                 <KardexConfigPanel
                   field={f}

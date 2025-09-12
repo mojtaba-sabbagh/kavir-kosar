@@ -101,13 +101,18 @@ export function buildZodSchema(fields: Pick<FormField,
         break;
       }
       case 'entryRef': {
-        const r = uuid; // store the selected entryId as a UUID
-        shape[f.key] = f.required ? r : r.optional();
+        const base = z.preprocess(
+        v => (v === '' || v == null ? undefined : v),
+        z.string().uuid()
+        );
+        shape[f.key] = f.required ? base : base.optional();
         break;
       }
       case 'entryRefMulti': {
-        const arr = z.array(uuid).nonempty().catch([]); // accept [] for optional
-        shape[f.key] = f.required ? arr : arr.optional().default([]);
+        // must be an array of UUID strings
+        const base = z.array(z.string().uuid());
+        // required: at least one; optional: allow missing/empty array
+        shape[f.key] = f.required ? base.min(1) : base.optional().default([]);
         break;
       }
       case 'phone': {
@@ -124,5 +129,5 @@ export function buildZodSchema(fields: Pick<FormField,
     }
   }
 
-  return z.object(shape);
+  return z.object(shape).strict();
 }

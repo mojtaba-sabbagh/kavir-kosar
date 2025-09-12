@@ -6,7 +6,7 @@ import { resolveTable } from '@/lib/tableSelect-sources';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const IDENT_SAFE = /^[a-zA-Z0-9_]+$/;
+const IDENT_SAFE = /^[a-zA-Z0-9_\-]+$/;
 const qp = (url: URL, k: string) => (url.searchParams.get(k) ?? '').trim();
 
 export async function GET(req: Request, ctx: { params: Promise<{ code: string }> }) {

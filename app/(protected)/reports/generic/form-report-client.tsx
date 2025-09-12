@@ -39,8 +39,13 @@ export default function FormReportClient({ code }: { code: string }) {
   // guard so we only initialize order once from server meta
   const didInitOrder = useRef(false);
 
-  
-  
+  // …inside the component:
+const [entryModal, setEntryModal] = useState<{
+  open: boolean; id?: string; loading?: boolean; data?: any; error?: string | null;
+}>({ open: false, loading: false, error: null });
+
+// cache for link labels to avoid refetch each render
+const [entryLabelCache, setEntryLabelCache] = useState<Record<string, string>>({});
 // build qs stays the same (depends on orderKey/orderDir)
 const qs = useMemo(() => {
   const p = new URLSearchParams();
@@ -136,10 +141,78 @@ const visible = useMemo(() => {
     }
   }
 
+
+function renderValueGeneric(
+    key: string,
+    value: any,
+    schemaArr: { key: string; type: string; config?: any }[] | undefined,
+    maps: Record<string, Record<string, string>> | undefined
+) {
+  const t = schemaArr?.find(s => s.key === key)?.type;
+
+  // entryRef / entryRefMulti handled by the table renderer (links). For modal, show plain mapped values:
+  if (t === 'entryRef' || t === 'entryRefMulti') {
+    if (Array.isArray(value)) return value.join('، ');
+    return value ?? '';
+  }
+
+  // date / datetime
+  if (t === 'date' && value) return formatJalali(value, false);
+  if (t === 'datetime' && value) return formatJalali(value, true);
+
+  // select-like (includes tableSelect & kardexItem because we pass maps)
+  const map = maps?.[key];
+  if (Array.isArray(value)) return value.map(v => map?.[String(v)] ?? String(v)).join('، ');
+  if (value == null) return '';
+  return map?.[String(value)] ?? String(value);
+}
+
   // Render cell by type + map
   function renderCell(key: string, value: any) {
     const t = typeByKey[key];
 
+      // 1) entryRef -> clickable link with form title
+    if (t === 'entryRef' && typeof value === 'string' && value) {
+      const label = entryLabelCache[value];
+      if (!label) {
+        // lazy load label (non-blocking)
+        ensureEntryLabel(value);
+      }
+      return (
+        <button
+          type="button"
+          className="text-blue-600 hover:underline"
+          onClick={() => openEntryModal(value)}
+          title="مشاهده جزئیات"
+        >
+          {label || '...'}
+        </button>
+      );
+    }
+
+    // 1b) entryRefMulti -> chips of links
+    if (t === 'entryRefMulti' && Array.isArray(value)) {
+      return (
+        <div className="flex flex-wrap gap-1">
+          {value.map((id: any, i: number) => {
+            if (typeof id !== 'string' || !id) return null;
+            const lbl = entryLabelCache[id];
+            if (!lbl) ensureEntryLabel(id);
+            return (
+              <button
+                key={`${id}-${i}`}
+                type="button"
+                className="rounded-full border px-2 py-0.5 text-xs hover:bg-gray-50 text-blue-700 border-blue-200"
+                onClick={() => openEntryModal(id)}
+                title="مشاهده جزئیات"
+              >
+                {lbl || '...'}
+              </button>
+            );
+          })}
+        </div>
+      );
+    }
     // date/datetime
     if (t === 'date' && value) return formatJalali(value, false);
     if (t === 'datetime' && value) return formatJalali(value, true);
@@ -157,8 +230,8 @@ const visible = useMemo(() => {
     return map?.[String(value)] ?? String(value);
   }
 
-  return (
-    <div className="space-y-4">
+return (
+  <div className="space-y-4">
       {err && <div className="text-red-600 text-sm">{err}</div>}
 
       {/* Controls */}
@@ -170,6 +243,7 @@ const visible = useMemo(() => {
               const label = labels[k] || k;
               const field = schema.find(s => s.key === k);
               const t = field?.type || 'text';
+              const cfg = (field?.config ?? {}) as any;
               const v = filters[k];
 
               // --- tableSelect: select populated by configured table/type ---
@@ -208,6 +282,37 @@ const visible = useMemo(() => {
                       value={v || {}}
                       onChange={(nv) => setFilters(prev => ({ ...prev, [k]: nv }))}
                     />
+                  </div>
+                );
+              }
+
+              if (t === 'select' || t === 'multiselect') {
+                const opts: Array<{ value: string; label: string }> = Array.isArray(cfg.options) ? cfg.options : [];
+                return (
+                  <div key={k} className="space-y-1">
+                    <label className="text-xs text-gray-600 block">{label}</label>
+
+                    {/* single-select filter; feel free to switch to multiple if you want */}
+                    <select
+                      className="w-full border rounded-md px-2 py-1"
+                      dir="rtl"
+                      value={v ?? ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setFilters(prev => {
+                          const next = { ...prev };
+                          if (!val) delete next[k]; else next[k] = val;
+                          return next;
+                        });
+                      }}
+                    >
+                      <option value="">همه</option>
+                      {opts.map((o, i) => (
+                        <option key={`${k}-${i}-${String(o.value)}`} value={String(o.value)}>
+                          {String(o.label ?? o.value)}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 );
               }
@@ -307,9 +412,39 @@ const visible = useMemo(() => {
           </tbody>
         </table>
       </div>
-    </div>
+      <Modal open={entryModal.open} onClose={() => setEntryModal({ open: false })}>
+        {entryModal.loading && <div className="text-sm text-gray-600">در حال بارگذاری…</div>}
+        {entryModal.error && <div className="text-sm text-red-600">{entryModal.error}</div>}
+
+        {entryModal.data && (
+          <div dir="rtl" className="space-y-3">
+            <div className="font-bold text-base">{entryModal.data.formTitle}</div>
+            <div className="text-xs text-gray-500 ltr">
+              {formatJalali(entryModal.data.createdAt, true)} • {statusFa(entryModal.data.status)}
+            </div>
+
+            <div className="divide-y">
+              {Object.entries(entryModal.data.payload || {}).map(([k, v]: any) => {
+                const lbl = entryModal.data.labels?.[k] || k;
+                const rendered = renderValueGeneric(
+                  k,
+                  v,
+                  entryModal.data.schema,
+                  entryModal.data.displayMaps
+                );
+                return (
+                  <div key={k} className="py-2 grid grid-cols-3 gap-2">
+                    <div className="text-gray-600 text-sm">{lbl}</div>
+                    <div className="col-span-2 text-sm break-words">{rendered}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+    </Modal>
+  </div>
   );
-}
 
 function statusFa(s: string) {
   switch (s) {
@@ -323,8 +458,6 @@ function statusFa(s: string) {
       return s;
   }
 }
-
-// inside form-report-client.tsx (same file)
 
 function TableSelectFilter({
   label,
@@ -389,4 +522,50 @@ function TableSelectFilter({
       {err && <div className="text-xs text-red-600">{err}</div>}
     </div>
   );
+}
+async function ensureEntryLabel(id: string) {
+  if (entryLabelCache[id]) return entryLabelCache[id];
+  try {
+    const r = await fetch(`/api/entries/${id}/summary`, { cache: 'no-store' });
+    const j = await r.json();
+    const label = j?.formTitle || 'مشاهده';
+    setEntryLabelCache(prev => ({ ...prev, [id]: label }));
+    return label;
+  } catch {
+    return 'مشاهده';
+  }
+}
+
+async function openEntryModal(id: string) {
+  setEntryModal({ open: true, id, loading: true, error: null });
+  try {
+    const r = await fetch(`/api/entries/${id}/summary`, { cache: 'no-store' });
+    const j = await r.json();
+    if (!r.ok || !j?.ok) throw new Error(j?.message || 'خطا');
+    setEntryModal({ open: true, id, loading: false, data: j, error: null });
+    // also cache label if not yet cached
+    if (j?.formTitle) {
+      setEntryLabelCache(prev => prev[id] ? prev : { ...prev, [id]: j.formTitle });
+    }
+  } catch (e: any) {
+    setEntryModal({ open: true, id, loading: false, error: e?.message || 'خطا' });
+  }
+}
+
+function Modal({ open, onClose, children }: { open: boolean; onClose: () => void; children: React.ReactNode }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="absolute inset-0 flex items-center justify-center p-4">
+        <div className="w-full max-w-2xl rounded-xl bg-white shadow-lg border p-4 overflow-auto max-h-[80vh]">
+          <div className="text-left">
+            <button className="text-sm text-gray-500 hover:text-gray-700" onClick={onClose}>بستن</button>
+          </div>
+          <div className="mt-2">{children}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
 }

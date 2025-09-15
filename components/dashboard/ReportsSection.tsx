@@ -1,14 +1,19 @@
+// components/dashboard/ReportsSection.tsx
 import Link from 'next/link';
+import { getSession } from '@/lib/auth';
 import { listReadableReports } from '@/lib/reports';
 
 export const dynamic = 'force-dynamic';
 
 export default async function ReportsSection() {
-  const reports = await listReadableReports();
+  const user = await getSession();
+  if (!user?.id) return null;
+
+  const reports = await listReadableReports(user.id);
   if (!reports || reports.length === 0) return null;
 
   return (
-    <section className="space-y-3">
+   <section className="space-y-3">
       <h2 className="text-lg font-semibold">گزارش‌ها</h2>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {reports.map(r => (

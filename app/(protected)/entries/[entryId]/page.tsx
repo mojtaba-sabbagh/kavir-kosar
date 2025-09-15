@@ -78,16 +78,17 @@ export default async function EntryByIdPage(props: { params: Promise<{ entryId: 
 
     // select / multiselect → map to option labels
     if (f.type === 'select') {
-      const opts = (f.config?.options ?? []) as Array<{ value: string; label: string }>;
-      const found = opts.find((o) => String(o.value) === String(v));
+      const cfg = (f.config as any) ?? {};
+      const opts: Array<{ value: string; label: string }> = Array.isArray(cfg.options) ? cfg.options : [];
+      const found = opts.find(o => String(o.value) === String(v));
       return <span>{found?.label ?? String(v)}</span>;
     }
     if (f.type === 'multiselect' && Array.isArray(v)) {
-      const opts = (f.config?.options ?? []) as Array<{ value: string; label: string }>;
-      const labels = v
-        .map((x: any) => opts.find((o) => String(o.value) === String(x))?.label ?? String(x))
-        .join('، ');
-      return <span>{labels}</span>;
+      const cfg = (f.config as any) ?? {};
+      const opts: Array<{ value: string; label: string }> = Array.isArray(cfg.options) ? cfg.options : [];
+      const values: string[] = Array.isArray(v) ? v.map(String) : [];
+      const labels = values.map(val => opts.find(o => String(o.value) === val)?.label ?? val);
+      return <span>{labels.join('، ')}</span>;
     }
 
     // kardexItem → show nameFa — code

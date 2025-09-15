@@ -115,12 +115,6 @@ export function buildZodSchema(fields: Pick<FormField,
         shape[f.key] = f.required ? base.min(1) : base.optional().default([]);
         break;
       }
-      case 'phone': {
-        // Basic phone validation (any +digits, 3-32 chars)
-        const p = z.string().min(3).max(32).regex(/^\+?[0-9\s\-()]+$/);
-        shape[f.key] = f.required ? p : p.optional().transform(v => v ?? '');
-        break;
-      }
       default: {
         // Fallback: accept string
         const s = z.string().trim();

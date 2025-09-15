@@ -6,7 +6,6 @@ import Link from 'next/link';
 import FormsGrid from '@/components/FormsGrid';
 import ReportsSection from '@/components/dashboard/ReportsSection';
 import PendingSection from '@/components/dashboard/PendingSection';
-import AdminQuickLinks from '@/components/dashboard/AdminQuickLinks';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -25,7 +24,7 @@ export default async function HomeProtected() {
       titleFa: true,
       rolePermissions: {
         where: { role: { users: { some: { userId: user.id } } } },
-        select: { canSubmit: true },
+        select: { canSubmit: true, canRead: true},
       },
     },
   });
@@ -33,7 +32,8 @@ export default async function HomeProtected() {
   const forms = rawForms
     .map(f => {
       const canSubmit = f.rolePermissions.some(p => p.canSubmit);
-      return { id: f.id, code: f.code, titleFa: f.titleFa, canSubmit };
+      const canRead   = f.rolePermissions.some(p => p.canRead);
+      return { id: f.id, code: f.code, titleFa: f.titleFa, canSubmit, canRead };
     })
     .filter(f => f.canSubmit); // only show if at least submit
 

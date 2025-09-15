@@ -4,7 +4,7 @@ import { requireAdmin } from '@/lib/rbac';
 
 export async function POST(
   req: Request,
-  { params }: { params: { id: string } }
+  ctx: { params: Promise<{ id: string }> }
 ) {
   try {
     await requireAdmin();
@@ -13,7 +13,7 @@ export async function POST(
   }
 
   const { roleIds } = await req.json();
-
+  const params = await ctx.params;
   await prisma.userRole.deleteMany({ where: { userId: params.id } });
 
   if (Array.isArray(roleIds) && roleIds.length > 0) {

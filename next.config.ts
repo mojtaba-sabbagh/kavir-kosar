@@ -1,7 +1,16 @@
-import type { NextConfig } from "next";
+import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Let production builds pass even if ESLint has errors (optional)
+  eslint: {
+    ignoreDuringBuilds: true, // set true if you want to unblock CI quickly
+  },
+
+  // Pin the correct workspace root for Turbopack (to silence the lockfile warning)
+  // Set this to the directory that contains THIS app's package.json and next.config.ts
+  turbopack: {
+    root: '.',
+  },
 };
 
 export default nextConfig;

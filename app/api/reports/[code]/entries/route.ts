@@ -102,7 +102,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
       else if (key.endsWith('_to')) { bound = 'to'; key = key.slice(0, -'_to'.length); }
 
       if (!key || !IDENT_SAFE.test(key)) continue;
-      const ftype = typeByKey[key];
+      const ftype: string = (typeByKey[key] as string) || '';
 
       // dates are collected for a second pass
       if ((ftype === 'date' || ftype === 'datetime') && bound) {
@@ -124,82 +124,76 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
           take: 200,
         });
 
-      // tableSelect => equals on the stored code
-      if (ftype === 'tableSelect') {
-        params.push(key, v);
-        whereSql += ` AND payload->>$${params.length - 1} = $${params.length}`;
-        continue;
+      const codes = [...new Set(matches.map(m => m.code))];
+      if (codes.length === 0) {
+        // short-circuit empty
+        return NextResponse.json({
+          ok: true,
+          meta: {
+            formCode: form.code, titleFa: form.titleFa,
+            page, pageSize, total: 0,
+            visibleColumns, filterableKeys, orderableKeys, defaultOrder,
+            orderApplied: orderKey === 'createdAt' ? 'createdAt' : orderKey,
+          },
+          labels, rows: [], displayMaps, schema,
+        });
       }
-        const codes = [...new Set(matches.map(m => m.code))];
-        if (codes.length === 0) {
-          // short-circuit empty
-          return NextResponse.json({
-            ok: true,
-            meta: {
-              formCode: form.code, titleFa: form.titleFa,
-              page, pageSize, total: 0,
-              visibleColumns, filterableKeys, orderableKeys, defaultOrder,
-              orderApplied: orderKey === 'createdAt' ? 'createdAt' : orderKey,
-            },
-            labels, rows: [], displayMaps, schema,
-          });
-        }
-        // lock key placeholder
+      // lock key placeholder
+      params.push(key);
+      const keyIdx = params.length;
+      const col = `fe.payload->>$${keyIdx}`;
+      const ors: string[] = [];
+      for (const c of codes) {
+        params.push(c);
+        ors.push(`${col} = $${params.length}`);
+      }
+      whereSql += ` AND (${ors.join(' OR ')})`;
+      continue;
+    }
+
+    // tableSelect: contains by title OR equals by code (user might type code)
+    if (ftype === 'tableSelect') {
+      // try to match titles (requires table/type from config)
+      const ff = form.fields.find(f => f.key === key);
+      const tcfg = (ff?.config as any)?.tableSelect || {};
+      const tableName = resolveTable(tcfg.table);
+      const tType = tcfg.type as string | undefined;
+
+      if (tableName && tType) {
+        const found = await prisma.$queryRawUnsafe<{ code: string }[]>(
+          `
+            SELECT code
+            FROM ${tableName}
+            WHERE type = $1 AND (title ILIKE $2 OR code ILIKE $2)
+            LIMIT 200
+          `,
+          tType,
+          `%${v}%`
+        );
+        const codes = [...new Set(found.map(r => r.code))];
         params.push(key);
         const keyIdx = params.length;
         const col = `fe.payload->>$${keyIdx}`;
-        const ors: string[] = [];
-        for (const c of codes) {
-          params.push(c);
+        if (codes.length) {
+          const ors: string[] = [];
+          for (const c of codes) { params.push(c); ors.push(`${col} = $${params.length}`); }
+          // also allow the raw text to equal code directly
+          params.push(v);
           ors.push(`${col} = $${params.length}`);
+          whereSql += ` AND (${ors.join(' OR ')})`;
+        } else {
+          // fallback to contains on JSON string
+          params.push(`%${v}%`);
+          whereSql += ` AND ${col} ILIKE $${params.length}`;
         }
-        whereSql += ` AND (${ors.join(' OR ')})`;
         continue;
       }
-
-      // tableSelect: contains by title OR equals by code (user might type code)
-      if (ftype === 'tableSelect') {
-        // try to match titles (requires table/type from config)
-        const ff = form.fields.find(f => f.key === key);
-        const tcfg = (ff?.config as any)?.tableSelect || {};
-        const tableName = resolveTable(tcfg.table);
-        const tType = tcfg.type as string | undefined;
-
-        if (tableName && tType) {
-          const found = await prisma.$queryRawUnsafe<{ code: string }[]>(
-            `
-              SELECT code
-              FROM ${tableName}
-              WHERE type = $1 AND (title ILIKE $2 OR code ILIKE $2)
-              LIMIT 200
-            `,
-            tType,
-            `%${v}%`
-          );
-          const codes = [...new Set(found.map(r => r.code))];
-          params.push(key);
-          const keyIdx = params.length;
-          const col = `fe.payload->>$${keyIdx}`;
-          if (codes.length) {
-            const ors: string[] = [];
-            for (const c of codes) { params.push(c); ors.push(`${col} = $${params.length}`); }
-            // also allow the raw text to equal code directly
-            params.push(v);
-            ors.push(`${col} = $${params.length}`);
-            whereSql += ` AND (${ors.join(' OR ')})`;
-          } else {
-            // fallback to contains on JSON string
-            params.push(`%${v}%`);
-            whereSql += ` AND ${col} ILIKE $${params.length}`;
-          }
-          continue;
-        }
-      }
-
-      // generic contains on JSON text
-      params.push(key, `%${v}%`);
-      whereSql += ` AND fe.payload->>$${params.length - 1} ILIKE $${params.length}`;
     }
+
+    // generic contains on JSON text
+    params.push(key, `%${v}%`);
+    whereSql += ` AND fe.payload->>$${params.length - 1} ILIKE $${params.length}`;
+  }
 
     // date/datetime ranges pass (casted)
     for (const [k, range] of Object.entries(dtRanges)) {
@@ -286,6 +280,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
     );
 
     // ---------- display maps for tableSelect (code -> title) ----------
+    
     const tableSelectFields = form.fields
       .filter(f => f.type === 'tableSelect' && (f.config as any)?.tableSelect?.table && (f.config as any)?.tableSelect?.type)
       .map(f => ({ key: f.key, table: (f.config as any).tableSelect.table as string, type: (f.config as any).tableSelect.type as string }));

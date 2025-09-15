@@ -32,7 +32,7 @@ const updateSchema = z.object({
   isActive: z.boolean(),
 });
 
-export async function PUT(req: Request, { params }: { params: { id: string } }) {
+export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try { await requireAdmin(); } catch (e:any) {
     return NextResponse.json({ message: 'دسترسی غیرمجاز' }, { status: e?.message === 'UNAUTHORIZED' ? 401 : 403 });
   }
@@ -45,7 +45,7 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
   }
 
   const data = parsed.data;
-
+  const params = await ctx.params;
   // prevent duplicate codes (except same record)
   const dup = await prisma.report.findUnique({ where: { code: data.code } });
   if (dup && dup.id !== params.id) {
@@ -67,11 +67,11 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 }
 
 /* You already have POST (with _method=DELETE) below; keep it as-is. */
-export async function POST(req: Request, { params }: { params: { id: string } }) {
+export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try { await requireAdmin(); } catch (e:any) {
     return NextResponse.json({ message: 'دسترسی غیرمجاز' }, { status: e?.message === 'UNAUTHORIZED' ? 401 : 403 });
   }
-
+  const params = await ctx.params;
   const url = new URL(req.url);
   let override = url.searchParams.get('_method');
   if (!override && req.headers.get('content-type')?.includes('form')) {

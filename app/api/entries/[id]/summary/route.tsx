@@ -5,6 +5,7 @@ import { resolveTable } from '@/lib/tableSelect-sources';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+type TableSelectCfg = { table?: string; type?: string };
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
@@ -49,13 +50,26 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 
     // 2) tableSelect (code -> title)
     const tableSelectFields = form.fields
-      .filter(f => f.type === 'tableSelect' && f.config?.tableSelect?.table && f.config?.tableSelect?.type)
-      .map(f => ({ key: f.key, table: f.config.tableSelect.table as string, type: f.config.tableSelect.type as string }));
+      .map(f => {
+        const cfg = (f.config ?? {}) as Record<string, any>;
+        const ts: TableSelectCfg = (cfg.tableSelect ?? {}) as TableSelectCfg;
+        return {
+          key: f.key,
+          table: ts.table,
+          type: ts.type,
+          _valid: f.type === 'tableSelect' && !!ts.table && !!ts.type,
+        };
+      })
+      .filter(f => f._valid)
+      .map(f => ({ key: f.key, table: f.table as string, type: f.type as string }));
 
+    const payload = (entry.payload ?? {}) as Record<string, unknown>
     for (const tf of tableSelectFields) {
-      const v = entry.payload?.[tf.key];
-      if (!v) continue;
-      const codes = Array.isArray(v) ? v.filter(Boolean) : [v];
+      const raw = payload[tf.key];
+      if (!raw) continue;
+      const codes = Array.isArray(raw)
+        ? (raw as unknown[]).filter(Boolean).map(String)
+        : [String(raw)];
 
       if (codes.length) {
         const tableName = resolveTable(tf.table);
@@ -73,12 +87,22 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
 
     // 3) kardexItem (code -> "nameFa – code")
     const kardexKeys = form.fields.filter(f => f.type === 'kardexItem').map(f => f.key);
-    if (kardexKeys.length) {
-      const codes = new Set<string>();
-      for (const k of kardexKeys) {
-        const v = entry.payload?.[k];
-        if (typeof v === 'string' && v) codes.add(v);
-      }
+if (kardexKeys.length) {
+  const payload = (entry.payload ?? {}) as Record<string, unknown>; // ✅ cast once
+  const codes = new Set<string>();
+
+  for (const k of kardexKeys) {
+    const v = payload[k];
+    // accept string, or coerce other primitives safely
+    if (typeof v === 'string' && v) {
+      codes.add(v);
+    } else if (v != null && typeof v !== 'object') {
+      // number/boolean, etc. → string
+      const s = String(v);
+      if (s) codes.add(s);
+    }
+  }      
+      
       if (codes.size) {
         const items = await prisma.kardexItem.findMany({
           where: { code: { in: Array.from(codes) } },

@@ -15,7 +15,7 @@ const Q = z.object({
   filters: z.string().optional(),
 });
 
-export async function GET(req: Request, { params }: { params: { id: string } }) {
+export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const url = new URL(req.url);
   const q = Q.safeParse({
     page: url.searchParams.get('page') ?? undefined,
@@ -25,16 +25,32 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
     filters: url.searchParams.get('filters') ?? undefined,
   });
   if (!q.success) return NextResponse.json({ message: 'ورودی نامعتبر' }, { status: 422 });
-
+  const params = await ctx.params;
   const form = await prisma.form.findUnique({
     where: { code: params.id },
-    select: {
-      id: true, code: true,
-      report: true,
-      fields: { select: { key: true, labelFa: true, type: true, config: true, order: true } }
-    }
+    include: {
+      fields: {
+      select: { key: true, type: true, labelFa: true, config: true, order: true },
+      orderBy: { order: 'asc' },
+      },
+    }    
   });
   if (!form) return NextResponse.json({ message: 'فرم یافت نشد' }, { status: 404 });
+  
+  // 🔹 Get actual report config from the Report table
+  const reportCfg = await prisma.report.findUnique({
+    where: { formId: form.id },
+    select: {
+      visibleColumns: true,
+      filterableKeys: true,
+      orderableKeys: true,
+      defaultOrder: true,
+    },
+  });
+  const visibleColumns: string[] = reportCfg?.visibleColumns ?? [];
+  const filterableKeys: string[] = reportCfg?.filterableKeys ?? [];
+  const orderableKeys: string[] = reportCfg?.orderableKeys ?? [];
+  const defaultOrder = (reportCfg?.defaultOrder as any) ?? { key: 'createdAt', dir: 'desc' };
 
   // Basic server-side page window; filtering on payload is done in app layer
   const skip = (q.data.page - 1) * q.data.pageSize;
@@ -65,10 +81,15 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
     items = items.filter(it => matchFilters(it.payload, filters, form.fields));
   }
 
-  // Optional: order by a payload key if allowed
-  const allowedOrderKeys = new Set<string>(['createdAt', ...(form.report?.orderableKeys ?? [])]);
-  const oKey = q.data.orderKey && allowedOrderKeys.has(q.data.orderKey) ? q.data.orderKey : (form.report?.defaultOrder as any)?.key;
-  const oDir = (q.data.orderDir ?? (form.report?.defaultOrder as any)?.dir ?? 'desc') as 'asc'|'desc';
+  // 3) Allowed order keys + resolve order
+  const allowedOrderKeys = new Set<string>(['createdAt', ...orderableKeys]);
+
+const oKey =
+  (q.data.orderKey && allowedOrderKeys.has(q.data.orderKey))
+    ? q.data.orderKey
+    : (defaultOrder.key ?? 'createdAt');
+
+const oDir = ((q.data.orderDir ?? defaultOrder.dir ?? 'desc') === 'asc' ? 'asc' : 'desc') as 'asc'|'desc';
 
   if (oKey && oKey !== 'createdAt') {
     const dir = oDir === 'asc' ? 1 : -1;

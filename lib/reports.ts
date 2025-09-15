@@ -1,71 +1,67 @@
+// lib/reports.ts
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/auth';
 
-// keep (or add) this helper
-async function isAdmin(userId: string) {
-  const c = await prisma.userRole.count({
-    where: { userId, role: { name: 'admin' } },
-  });
-  return c > 0;
-}
-
-// already added earlier
-export async function canReadReport(code: string) {
+// Can the current user view this report?
+export async function canReadReport(reportCodeUpper: string): Promise<boolean> {
   const user = await getSession();
   if (!user?.id) return false;
 
   const report = await prisma.report.findFirst({
-    where: { code: { equals: code, mode: 'insensitive' }, isActive: true },
+    where: { code: reportCodeUpper },
     select: { id: true },
   });
   if (!report) return false;
 
-  if (await isAdmin(user.id)) return true;
+  const roleIds = (await prisma.userRole.findMany({
+    where: { userId: user.id },
+    select: { roleId: true },
+  })).map(r => r.roleId);
 
-  const ok = await prisma.roleReportPermission.count({
+  if (roleIds.length === 0) return false;
+
+  const perm = await prisma.roleReportPermission.findFirst({
     where: {
       reportId: report.id,
+      roleId: { in: roleIds },
       canView: true,
-      role: { userRoles: { some: { userId: user.id } } },
     },
   });
 
-  return ok > 0;
+  return !!perm;
 }
 
-// ✅ NEW: list reports the current user can view (for dashboard)
-export async function listReadableReports() {
-  const user = await getSession();
-  if (!user?.id) return [];
-
-  const baseSelect = {
-    id: true,
-    code: true,
-    titleFa: true,
-    sortOrder: true,
-  } as const;
-
-  // Admin sees all active reports
-  if (await isAdmin(user.id)) {
-    return prisma.report.findMany({
-      where: { isActive: true },
-      select: baseSelect,
-      orderBy: [{ sortOrder: 'asc' }, { titleFa: 'asc' }],
-    });
+// Throw if the user cannot view the report
+export async function requireReportView(reportCodeUpper: string): Promise<void> {
+  const ok = await canReadReport(reportCodeUpper);
+  if (!ok) {
+    const user = await getSession();
+    if (!user?.id) throw new Error('UNAUTHORIZED');
+    throw new Error('FORBIDDEN');
   }
+}
 
-  // Others: only reports granted via role memberships
-  return prisma.report.findMany({
-    where: {
-      isActive: true,
-      rolePermissions: {
-        some: {
-          canView: true,
-          role: { userRoles: { some: { userId: user.id } } },
-        },
-      },
-    },
-    select: baseSelect,
-    orderBy: [{ sortOrder: 'asc' }, { titleFa: 'asc' }],
+// List all reports the given user can view
+export async function listReadableReports(userId: string) {
+  const roleIds = (await prisma.userRole.findMany({
+    where: { userId },
+    select: { roleId: true },
+  })).map(r => r.roleId);
+
+  if (roleIds.length === 0) return [];
+
+  const perms = await prisma.roleReportPermission.findMany({
+    where: { roleId: { in: roleIds }, canView: true },
+    select: { reportId: true },
   });
+  const reportIds = Array.from(new Set(perms.map(p => p.reportId)));
+  if (reportIds.length === 0) return [];
+
+  const reports = await prisma.report.findMany({
+    where: { id: { in: reportIds }, isActive: true },
+    select: { id: true, code: true, titleFa: true, sortOrder: true, formId: true },
+    orderBy: { sortOrder: 'asc' },
+  });
+
+  return reports;
 }

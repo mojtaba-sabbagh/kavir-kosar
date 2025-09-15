@@ -3,7 +3,8 @@ import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(_req: Request, { params }: { params: { code: string } }) {
+export async function GET(_req: Request, ctx: { params: Promise<{ code: string }> }) {
+  const params = await ctx.params;
   const form = await prisma.form.findUnique({
     where: { code: params.code },
     select: {

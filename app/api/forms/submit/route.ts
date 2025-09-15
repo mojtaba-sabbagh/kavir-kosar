@@ -5,6 +5,7 @@ import { getSession } from '@/lib/auth';
 import { buildZodSchema } from '@/lib/forms/schema-builder';
 import { generateConfirmationTasks } from '@/lib/workflow';
 import { syncEntryRelations } from '@/lib/forms/relations';
+import type { Prisma } from '@prisma/client';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -74,20 +75,20 @@ if (refFields.length) {
     }
   }
 }
+const cleanPayload = JSON.parse(JSON.stringify(parsed.data)) as Prisma.InputJsonValue;
+const entry = await prisma.formEntry.create({
+  data: {
+    formId: form.id,
+    createdBy: user.id,
+    payload: cleanPayload,
+    formVersion: form.version,
+    status: 'submitted',
+  },
+});
+// Sync EntryRelation rows from payload
+await syncEntryRelations({ entryId: entry.id, fields: form.fields, payload: parsed.data });
 
-  const entry = await prisma.formEntry.create({
-    data: {
-      formId: form.id,
-      createdBy: user.id,
-      payload: parsed.data,
-      formVersion: form.version,
-      status: 'submitted',
-    },
-  });
-  // Sync EntryRelation rows from payload
-  await syncEntryRelations({ entryId: entry.id, fields: form.fields, payload: parsed.data });
-  
-  await generateConfirmationTasks(entry.id);
+await generateConfirmationTasks(entry.id);
 
-  return NextResponse.json({ ok: true, entryId: entry.id });
+return NextResponse.json({ ok: true, entryId: entry.id });
 }

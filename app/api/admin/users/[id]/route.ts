@@ -20,14 +20,14 @@ const updateSchema = z.object({
   roleIds: z.array(z.string().min(1)).optional() // set full list of roles
 });
 
-export async function PUT(req: Request, { params }: { params: { id: string } }) {
+export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
     await requireAdmin();
   } catch (e: any) {
     const code = e?.message === 'UNAUTHORIZED' ? 401 : 403;
     return NextResponse.json({ message: 'دسترسی غیرمجاز' }, { status: code });
   }
-
+  const params = await ctx.params;
   const userId = params.id;
   const json = await req.json();
   const parsed = updateSchema.safeParse(json);
@@ -82,7 +82,7 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
   return NextResponse.json({ ok: true });
 }
 
-export async function POST(req: Request, { params }: { params: { id: string } }) {
+export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
   // keep supporting form-based DELETE with _method override
   try {
     await requireAdmin();
@@ -90,7 +90,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     const code = e?.message === 'UNAUTHORIZED' ? 401 : 403;
     return NextResponse.json({ message: 'دسترسی غیرمجاز' }, { status: code });
   }
-
+  const params = await ctx.params;
   const url = new URL(req.url);
   let methodOverride: string | null = url.searchParams.get('_method');
   if (!methodOverride && req.headers.get('content-type')?.includes('form')) {

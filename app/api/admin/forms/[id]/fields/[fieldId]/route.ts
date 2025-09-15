@@ -19,14 +19,17 @@ const FieldUpdate = z.object({
   config: z.any().optional(),
 });
 
-export async function PUT(req: Request, { params }: { params: { id: string; fieldId: string } }) {
+export async function PUT(
+  req: Request,
+  ctx: { params: Promise<{ id: string; fieldId: string }> }
+) {
   try { await requireAdmin(); } catch { return NextResponse.json({ message: 'دسترسی غیرمجاز' }, { status: 403 }); }
+  const { id, fieldId } = await ctx.params;
   const body = await req.json().catch(() => null);
   const parsed = FieldUpdate.safeParse(body);
   if (!parsed.success) return NextResponse.json({ message: ' ورودی نامعتبر' }, { status: 422 });
 
-  const formId = params.id;
-  const fieldId = params.fieldId;
+  const formId = id;
   const { key, labelFa, type, required, order, config } = parsed.data;
 
   // Load the current field to detect renames/type changes
@@ -85,8 +88,10 @@ export async function PUT(req: Request, { params }: { params: { id: string; fiel
   return NextResponse.json({ field });
 }
 
-export async function DELETE(_req: Request, { params }: { params: { id: string; fieldId: string } }) {
+export async function DELETE(_req: Request,   ctx: { params: Promise<{ id: string; fieldId: string }> }
+) {
   try { await requireAdmin(); } catch { return NextResponse.json({ message: 'دسترسی غیرمجاز' }, { status: 403 }); }
+  const params = await ctx.params;
   const formId = params.id;
   const fieldId = params.fieldId;
 

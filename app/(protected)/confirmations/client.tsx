@@ -26,7 +26,7 @@ function FinalConfirmButton({ entryId }:{ entryId: string }) {
 }
 
 export default function ConfirmationsClient({ items }:{
-  items: { taskId:string; kind:'confirm'|'final'; entryId:string; formCode:string; formTitleFa:string; createdAt:string|null }[];
+  items: { taskId:string; kind:'confirm'|'final'; entryId:string; formCode:string; formTitleFa:string; createdAt:string | null }[];
 }) {
   return (
     <div className="rounded-xl border bg-white overflow-x-auto">

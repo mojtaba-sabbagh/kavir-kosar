@@ -267,6 +267,7 @@ return (
                   <div key={k} className="space-y-1 overflow-visible">
                     <div className="text-xs text-gray-600">{label}</div>
                     <JDateRangeFilter
+                      label={label}
                       value={v || {}}
                       onChange={(nv) => setFilters(prev => ({ ...prev, [k]: nv }))}
                     />
@@ -279,6 +280,7 @@ return (
                   <div key={k} className="space-y-1 overflow-visible">
                     <div className="text-xs text-gray-600">{label}</div>
                     <JDateTimeRangeFilter
+                      label={label}
                       value={v || {}}
                       onChange={(nv) => setFilters(prev => ({ ...prev, [k]: nv }))}
                     />
@@ -490,10 +492,14 @@ function TableSelectFilter({
                : Array.isArray(j?.options) ? j.options
                : [];
 
-      const normalized = raw.map((it: any) => ({
-        code:  it.code  ?? it.value ?? '',
-        title: it.title ?? it.label ?? '',
-      })).filter(x => x.code && x.title);
+      const normalized: { code: string; title: string }[] =
+      (j.options ?? [])
+        .map((it: any) => ({
+          code:  it.code  ?? it.value ?? '',
+          title: it.title ?? it.label ?? '',
+        }))
+        .filter((x: { code: string; title: string }) => !!x.code && !!x.title);
+
 
       if (!cancel) setOpts(normalized);
     } catch (e:any) {

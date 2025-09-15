@@ -25,7 +25,7 @@ async function main() {
     create: { userId: admin.id, roleId: adminRole.id },
   });
 
-  // ---- Sample Forms
+  /*/ ---- Sample Forms
   const forms = await Promise.all([
     prisma.form.upsert({ where: { code: 'HR-REQ-01' }, update: {}, create: { code: 'HR-REQ-01', titleFa: 'فرم درخواست مرخصی', sortOrder: 10 } }),
     prisma.form.upsert({ where: { code: 'FIN-REQ-02' }, update: {}, create: { code: 'FIN-REQ-02', titleFa: 'فرم درخواست پرداخت', sortOrder: 20 } }),
@@ -150,14 +150,22 @@ const wasteForm = await prisma.form.upsert({
     },
   });
 
-  console.log('✅ Seed finished: admin + OPS-WASTE form and fields created.');
+  console.log('✅ Seed finished: admin + OPS-WASTE form and fields created.');*/
 
 // Create Kardex report
 const kardexReport = await prisma.report.upsert({
-  where: { code: 'KARDEX' },
-  update: { titleFa: 'گزارش کاردکس کالا' },
-  create: { code: 'KARDEX', titleFa: 'گزارش کاردکس کالا' },
-});
+    where: { code: 'KARDEX' },
+    update: { 
+      titleFa: 'گزارش کاردکس کالا',
+      url: '/reports/kardex'  // Added URL update here
+    },
+    create: { 
+      code: 'KARDEX', 
+      titleFa: 'گزارش کاردکس کالا',
+      url: '/reports/kardex'  // Added URL for create as well
+    },
+  });
+
 
 await prisma.roleReportPermission.upsert({
   where: { roleId_reportId: { roleId: adminRole.id, reportId: kardexReport.id } },

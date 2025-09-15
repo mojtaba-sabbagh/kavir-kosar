@@ -7,14 +7,16 @@ const prisma = new PrismaClient();
 
 // UPDATED: Match the actual column names from your Excel file
 const COLS = {
-  code:        'کد کالا',        // Changed from 'کد' to 'کد کالا'
-  nameFa:      'نام کالا',       // Changed from 'نام' to 'نام کالا'
-  category:    'گروه',           // This might not exist in your file
-  unit:        'واحد',           // This matches
-  openingQty:  'موجودی',         // Changed from 'موجودی اول دوره' to 'موجودی'
-  openingValue:'ارزش اول دوره',  // This might not exist
-  currentQty:  'موجودی',         // Using same as opening for now
-  currentValue:'ارزش فعلی',      // This might not exist
+  code:        'codeKala',        // Changed from 'کد' to 'کد کالا'
+  nameFa:      'nameKala',       // Changed from 'نام' to 'نام کالا'
+  //category:    'گروه',           // This might not exist in your file
+  //unit:        'واحد',           // This matches
+  currentQty:  'qty',         // Using same as opening for now
+  openingQty:  'openingQty',         // Changed from 'موجودی اول دوره' to 'موجودی'
+  //openingValue:'ارزش اول دوره',  // This might not exist
+  //currentValue:'ارزش فعلی',      // This might not exist
+  storage: 'storage',
+  orderPoint: 'orderPoint'  
 };
 
 function num(v: any) {
@@ -39,7 +41,7 @@ async function main() {
   if (rows.length > 0) {
     console.log('Available columns:', Object.keys(rows[0]));
   }
-
+  console.log(rows.slice(0, 3)); // Log first 3 rows for inspection
   const ops = [];
   let processed = 0;
   let skipped = 0;
@@ -55,12 +57,10 @@ async function main() {
     const item = {
       code,
       nameFa: String(r[COLS.nameFa] ?? '').trim() || code,
-      category: r[COLS.category] ? String(r[COLS.category]).trim() : null,
-      unit: String(r[COLS.unit] ?? '').trim() || null,
+      storage: r[COLS.storage] ? String(r[COLS.storage]).trim() : null,
+      orderPoint: String(r[COLS.orderPoint] ?? '').trim() || null,
       openingQty: num(r[COLS.openingQty]),
-      openingValue: num(r[COLS.openingValue]),
       currentQty: num(r[COLS.currentQty]),
-      currentValue: num(r[COLS.currentValue]),
       extra: {},
     } as any;
 

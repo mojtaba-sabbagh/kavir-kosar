@@ -73,7 +73,7 @@ export default function KardexLive() {
                   <td className="p-2 text-center">{it.unit ?? '—'}</td>
                   <td className="p-2 font-mono text-center" dir="ltr">{it.currentQty ?? '0'}</td>
                   <td className="p-2 font-mono text-center" dir="ltr">{it.openingQty ?? '0'}</td>
-                  <td className="p-2 font-mono text-center" dir="ltr">{it.storage ?? '-'}</td>
+                  <td className="p-2 text-center" dir="ltr">{it.storage ?? '-'}</td>
                   <td className="p-2 font-mono text-center" >{it.orderPoint ?? '0'}</td>
                 </tr>
               ))}

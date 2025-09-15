@@ -265,7 +265,7 @@ return (
               if (t === 'date') {
                 return (
                   <div key={k} className="space-y-1 overflow-visible">
-                    <div className="text-xs text-gray-600">{label}</div>
+                    {/* <div className="text-xs text-gray-600">{label}</div> */}
                     <JDateRangeFilter
                       label={label}
                       value={v || {}}
@@ -278,7 +278,7 @@ return (
               if (t === 'datetime') {
                 return (
                   <div key={k} className="space-y-1 overflow-visible">
-                    <div className="text-xs text-gray-600">{label}</div>
+                    {/* <div className="text-xs text-gray-600">{label}</div> */}
                     <JDateTimeRangeFilter
                       label={label}
                       value={v || {}}

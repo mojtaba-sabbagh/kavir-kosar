@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-type Row = { id: string; code: string; nameFa: string; unit: string | null; currentQty: string | number | null };
+type Row = { id: string; code: string; nameFa: string; unit: string | null; 
+            currentQty: string | number | null; openingQty: string | null; storage: string | null; 
+            orderPoint: string | null };
 
 export default function KardexLive() {
   const [q, setQ] = useState('');
@@ -22,7 +24,7 @@ export default function KardexLive() {
   setLoading(true);
   const url = q.trim()
     ? `/api/kardex/search?q=${encodeURIComponent(q)}&limit=50`
-    : `/api/kardex/search?limit=100`; // 👈 fetch all when empty
+    : `/api/kardex/search?limit=100`; // fetch all when empty
 
   fetch(url, { signal: ac.signal })
     .then(r => r.json())
@@ -52,19 +54,27 @@ export default function KardexLive() {
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50">
               <tr className="text-center text-gray-600">
+                <th className="p-2">ردیف</th>
                 <th className="p-2">نام کالا</th>
                 <th className="p-2">کد</th>
                 <th className="p-2">واحد</th>
                 <th className="p-2">موجودی</th>
+                <th className="p-2">موجودی ابتدای دوره</th>
+                <th className="p-2">نام انبار</th>
+                <th className="p-2">نقطه سفارش</th>
               </tr>
             </thead>
             <tbody>
-              {items.map((it) => (
+              {items.map((it, index) => (
                 <tr key={it.id} className="border-t">
+                  <td className="p-2">{index+1}</td>
                   <td className="p-2">{it.nameFa}</td>
                   <td className="p-2 font-mono text-center" dir="ltr">{it.code}</td>
                   <td className="p-2 text-center">{it.unit ?? '—'}</td>
                   <td className="p-2 font-mono text-center" dir="ltr">{it.currentQty ?? '0'}</td>
+                  <td className="p-2 font-mono text-center" dir="ltr">{it.openingQty ?? '0'}</td>
+                  <td className="p-2 font-mono text-center" dir="ltr">{it.storage ?? '-'}</td>
+                  <td className="p-2 font-mono text-center" >{it.orderPoint ?? '0'}</td>
                 </tr>
               ))}
             </tbody>

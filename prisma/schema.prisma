@@ -277,10 +277,12 @@ model KardexItem {
   nameFa       String
   category     String?
   unit         String?
+  storage      String?
   openingQty   Decimal? @db.Decimal(18, 3)
   openingValue Decimal? @db.Decimal(18, 2)
   currentQty   Decimal? @db.Decimal(18, 3)
   currentValue Decimal? @db.Decimal(18, 2)
+  orderPoint   Decimal? @db.Decimal(18, 2)
   extra        Json?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

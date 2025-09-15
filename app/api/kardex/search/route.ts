@@ -32,6 +32,10 @@ export async function GET(req: Request) {
       nameFa: it.nameFa,
       unit: it.unit ?? null,
       category: it.category ?? null,
+      currentQty: it.currentQty ?? null,
+      openingQty: it.openingQty ?? null,
+      storage: it.storage ?? null,
+      orderPoint: it.orderPoint ?? null,
     })),
   });
 }

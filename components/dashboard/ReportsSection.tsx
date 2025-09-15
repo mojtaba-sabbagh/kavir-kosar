@@ -19,10 +19,10 @@ export default async function ReportsSection() {
         {reports.map(r => (
           <Link
             key={r.id}
-            href={`/reports/${encodeURIComponent(r.code)}`} // keep real code (case-insensitive matching is in backend)
+            href={r.url || `/reports/${encodeURIComponent(r.code)}`} // keep real code (case-insensitive matching is in backend)
             className="block rounded-xl bg-blue-50 hover:bg-blue-100 transition p-4"
           >
-            <div className="font-semibold">{r.titleFa}</div>
+            <div className="font-semibold">{r.titleFa || r.code}</div>
             <div className="text-xs text-gray-600 mt-1 font-mono ltr">{r.code}</div>
           </Link>
         ))}

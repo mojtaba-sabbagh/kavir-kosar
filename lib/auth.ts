@@ -1,64 +1,74 @@
-// lib/auth.ts
+// lib/auth.ts (server-only)
+import { cookies, headers } from 'next/headers';
 import { SignJWT, jwtVerify } from 'jose';
-import { cookies } from 'next/headers';
-import type { NextRequest } from 'next/server';
 
-const COOKIE_NAME = 'session';
-const SECRET = new TextEncoder().encode(process.env.AUTH_SECRET || 'dev-secret-change-me');
+const COOKIE = 'session';
 
-export type SessionUser = {
-  id: string;
-  email: string;
-  name: string | null;
+function getSecret(): Uint8Array {
+  const s = process.env.SESSION_SECRET?.trim() ?? '';
+  if (s.length < 32) {
+    throw new Error('SESSION_SECRET is missing or too short (min 32 chars).');
+  }
+  return new TextEncoder().encode(s);
+}
+
+// ✅ headers() is async in Next 15
+const isSecure = async (): Promise<boolean> => {
+  const h = await headers();
+  const proto = h.get('x-forwarded-proto') ?? 'http';
+  return proto === 'https';
 };
 
-export async function createSession(user: SessionUser) {
-  const token = await new SignJWT({ user })
+export async function createSession(p: { id: string; email: string; name: string | null }) {
+  const token = await new SignJWT({ sub: p.id, email: p.email, name: p.name })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
-    .setExpirationTime('7d')
-    .sign(SECRET);
+    .setExpirationTime('30d')
+    .sign(getSecret());
 
-  const store = await cookies();                 // ⬅️ await
-  store.set(COOKIE_NAME, token, {
+  // ✅ cookies() is async in Next 15
+  const store = await cookies();
+  const secure = await isSecure();
+
+  store.set({
+    name: COOKIE,
+    value: token,
     httpOnly: true,
     sameSite: 'lax',
+    secure,          // only set Secure on HTTPS
     path: '/',
-    maxAge: 60 * 60 * 24 * 7,
+    maxAge: 60 * 60 * 24 * 30,
   });
 }
 
 export async function destroySession() {
-  const store = await cookies();                 // ⬅️ await
-  store.delete(COOKIE_NAME);
+  const store = await cookies();
+  const secure = await isSecure();
+
+  store.set({
+    name: COOKIE,
+    value: '',
+    httpOnly: true,
+    sameSite: 'lax',
+    secure,
+    path: '/',
+    expires: new Date(0),
+  });
 }
 
-export async function getSessionFromCookie(token?: string) {
+export async function getSession(): Promise<{ id: string; email: string; name: string | null } | null> {
+  const store = await cookies();
+  const token = store.get(COOKIE)?.value;
   if (!token) return null;
+
   try {
-    const { payload } = await jwtVerify(token, SECRET);
-    return payload as { user: SessionUser };
+    const { payload } = await jwtVerify(token, getSecret());
+    return {
+      id: String(payload.sub ?? ''),
+      email: String(payload.email ?? ''),
+      name: (payload.name as string) ?? null,
+    };
   } catch {
     return null;
   }
-}
-
-/**
- * In Server Components / Route Handlers call: await getSession()
- * In Middleware call: await getSession(req)
- */
-export async function getSession(req?: NextRequest) {
-  let token: string | undefined;
-
-  if (req) {
-    // Middleware path: NextRequest has a synchronous cookies store
-    token = req.cookies.get(COOKIE_NAME)?.value;
-  } else {
-    // Server Component / Route Handler path: cookies() is async
-    const store = await cookies();               // ⬅️ await
-    token = store.get(COOKIE_NAME)?.value;
-  }
-
-  const payload = await getSessionFromCookie(token);
-  return payload?.user ?? null;
 }

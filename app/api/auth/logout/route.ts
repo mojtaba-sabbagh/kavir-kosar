@@ -2,14 +2,18 @@
 import { NextResponse } from 'next/server';
 import { destroySession } from '@/lib/auth';
 
-export const runtime = 'nodejs';          // prisma/cookies need Node.js, not edge
-export const dynamic = 'force-dynamic';   // avoid static optimization
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+function originFrom(req: Request) {
+  const h = req.headers;
+  const proto = h.get('x-forwarded-proto') ?? 'http';
+  const host  = h.get('x-forwarded-host')  ?? h.get('host') ?? new URL(req.url).host;
+  return `${proto}://${host}`;
+}
 
 export async function POST(req: Request) {
-  await destroySession();                 // this awaits cookies() internally
-  // redirect back to sign-in (or home)
-  const url = new URL(req.url);
-  url.pathname = '/auth/sign-in';
-  url.search = '';
-  return NextResponse.redirect(url);
+  await destroySession();
+  const origin = originFrom(req);
+  return NextResponse.redirect(new URL('/auth/sign-in', origin), 303); // ✅ correct host, correct method switch
 }

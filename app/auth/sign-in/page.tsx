@@ -42,6 +42,9 @@ function SignInInner() {
     if (res.ok) {
       router.replace(next); // e.g. "/" or "/admin"
       router.refresh();
+      // Fallback in case router cache resists:
+      setTimeout(() => { if (location.pathname !== next) location.href = next; }, 150);
+      return;
     } else {
       let msg = 'ورود ناموفق بود';
       try {

@@ -59,7 +59,7 @@ export async function listReadableReports(userId: string) {
 
   const reports = await prisma.report.findMany({
     where: { id: { in: reportIds }, isActive: true },
-    select: { id: true, code: true, titleFa: true, sortOrder: true, formId: true },
+    select: { id: true, code: true, titleFa: true, sortOrder: true, formId: true, url: true },
     orderBy: { sortOrder: 'asc' },
   });
 

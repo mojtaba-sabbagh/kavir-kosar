@@ -9,10 +9,16 @@ export default function KardexPicker({
   label,
   value,
   onSelect,
+  endpoint = '/api/kardex/search',
+  minChars = 0,              // 0 => allow empty query to fetch defaults
+  debounceMs = 250,
 }: {
   label: string;
-  value: string;
+  value?: string;
   onSelect: (it: KardexItem) => void;
+  endpoint?: string;
+  minChars?: number;
+  debounceMs?: number;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [q, setQ] = useState('');
@@ -23,7 +29,6 @@ export default function KardexPicker({
   const [rect, setRect] = useState<DOMRect | null>(null);
   const blurTimer = useRef<number | null>(null);
 
-  // Keep dropdown positioned under the input (portal, fixed positioning)
   const updateRect = () => {
     if (!inputRef.current) return;
     setRect(inputRef.current.getBoundingClientRect());
@@ -33,19 +38,18 @@ export default function KardexPicker({
     updateRect();
     const onWin = () => updateRect();
     window.addEventListener('resize', onWin);
-    window.addEventListener('scroll', onWin, true); // capture scroll in ancestors
+    window.addEventListener('scroll', onWin, true);
     return () => {
       window.removeEventListener('resize', onWin);
       window.removeEventListener('scroll', onWin, true);
     };
   }, []);
 
-  // Close when clicking outside (works on mobile too)
+  // Close when clicking outside
   useEffect(() => {
     const onDocPointerDown = (e: PointerEvent) => {
       if (!inputRef.current) return;
       const t = e.target as Node;
-      // If tap happened inside the input, let focus handler reopen
       if (inputRef.current.contains(t)) return;
       setOpen(false);
     };
@@ -53,7 +57,7 @@ export default function KardexPicker({
     return () => document.removeEventListener('pointerdown', onDocPointerDown);
   }, []);
 
-  // Debounce helper
+  // Debounce
   function useDebounce<T>(val: T, ms = 250) {
     const [v, setV] = useState(val);
     useEffect(() => {
@@ -62,35 +66,65 @@ export default function KardexPicker({
     }, [val, ms]);
     return v;
   }
-  const dq = useDebounce(q, 250);
+  const dq = useDebounce(q, debounceMs);
 
-  // Search
+  // Shared fetcher (supports empty query)
+  async function fetchItems(signal: AbortSignal, query: string) {
+    const url = new URL(endpoint, window.location.origin);
+    if (query.trim().length > 0) url.searchParams.set('q', query.trim());
+    setErr(null);
+    setLoading(true);
+    try {
+      const res = await fetch(url.toString(), { cache: 'no-store', signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const j = await res.json().catch(() => ({}));
+      const arr: KardexItem[] = (j.items ?? j.rows ?? []) as KardexItem[];
+      const next = Array.isArray(arr) ? arr : [];
+      setItems(next);
+      setOpen(next.length > 0);
+    } catch (e) {
+      if ((e as any)?.name === 'AbortError') return; // new request started
+      setErr('خطا در جستجو');
+      setItems([]);
+      setOpen(false);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Fetch when typing (including empty if allowed by minChars=0)
   useEffect(() => {
-    (async () => {
+    const need = dq.trim().length >= minChars;
+    // If minChars > 0 and dq is too short, clear results
+    if (!need) {
+      setItems([]);
+      setOpen(false);
       setErr(null);
-      if (!dq || dq.trim().length < 1) {
-        setItems([]);
-        setOpen(false);
-        return;
-      }
-      setLoading(true);
-      try {
-        const res = await fetch('/api/kardex/search?q=' + encodeURIComponent(dq), { cache: 'no-store' });
-        const j = await res.json().catch(() => ({}));
-        const arr: KardexItem[] = (j.items ?? j.rows ?? []) as KardexItem[];
-        setItems(Array.isArray(arr) ? arr : []);
-        setOpen((arr?.length ?? 0) > 0); // open only if we have results
-      } catch {
-        setErr('خطا در جستجو');
-        setItems([]);
-        setOpen(false);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [dq]);
+      return;
+    }
+    const ctrl = new AbortController();
+    fetchItems(ctrl.signal, dq);
+    return () => ctrl.abort();
+  }, [dq, minChars]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Blur handling for mobile: delay close so taps can register
+  // Fetch on focus (so it shows a default list even before typing)
+  const handleFocus = () => {
+    updateRect();
+    // If we already have items from a recent fetch, just open
+    if (items.length > 0) {
+      setOpen(true);
+      return;
+    }
+    // Trigger a fetch even if q is empty when minChars = 0
+    if (minChars === 0) {
+      const ctrl = new AbortController();
+      fetchItems(ctrl.signal, '');
+      // we cannot return abort function from an event handler,
+      // but this will be very short-lived; acceptable here.
+    }
+  };
+
+  // Blur handling for mobile
   const scheduleClose = () => {
     blurTimer.current = window.setTimeout(() => setOpen(false), 120) as unknown as number;
   };
@@ -112,57 +146,49 @@ export default function KardexPicker({
         autoComplete="off"
         value={q}
         onChange={(e) => { setQ(e.target.value); updateRect(); }}
-        onFocus={() => { updateRect(); if (items.length > 0) setOpen(true); }}
+        onFocus={handleFocus}
         onBlur={scheduleClose}
         onClick={() => { updateRect(); if (items.length > 0) setOpen(true); }}
       />
 
-      {/* Inline hints */}
       {loading && <div className="mt-1 text-xs text-gray-500">در حال جستجو…</div>}
       {err && <div className="mt-1 text-xs text-red-600">{err}</div>}
-      {/*(!loading && !err && q && items.length === 0) && (
-        <!--div className="mt-1 text-xs text-gray-500">نتیجه‌ای یافت نشد</div>
-      )*/}
       {value && !q && <div className="mt-1 text-xs text-gray-500 font-mono ltr">{value}</div>}
 
-      {/* Portal dropdown */}
       {open && items.length > 0 && rect && typeof window !== 'undefined' && createPortal(
         <ul
           role="listbox"
-          // position under input, even with mobile keyboard & tricky containers
           style={{
             position: 'fixed',
-            top: rect.bottom + window.scrollY + 4,
-            left: rect.left + window.scrollX,
+            top: rect.bottom + 4,           // fixed + viewport rect => no scrollY
+            left: rect.left,
             width: rect.width,
             maxHeight: '16rem',
             zIndex: 10000,
           }}
           className="overflow-auto rounded-md border bg-white shadow-lg"
-          onPointerDown={(e) => { e.preventDefault(); cancelScheduledClose(); }} // keep open while tapping
-          onMouseDown={(e) => { e.preventDefault(); cancelScheduledClose(); }}   // Safari fallback
+          onPointerDown={(e) => { e.preventDefault(); cancelScheduledClose(); }}
+          onMouseDown={(e) => { e.preventDefault(); cancelScheduledClose(); }}
         >
-            {items.map((it) => (
+          {items.map((it) => (
             <li
-                key={it.id}
-                role="option"
-                tabIndex={-1}
-                className="px-3 py-2 hover:bg-blue-50 cursor-pointer flex items-center justify-between pointer-events-auto"
-                // Select on pointerdown so mobile never misses it
-                onPointerDown={(e) => {
-                e.preventDefault();            // keep focus, avoid blur
-                cancelScheduledClose();        // cancel pending close
-                onSelect(it);                  // <-- do the selection NOW
+              key={it.id}
+              role="option"
+              tabIndex={-1}
+              className="px-3 py-2 hover:bg-blue-50 cursor-pointer flex items-center justify-between pointer-events-auto"
+              onPointerDown={(e) => {
+                e.preventDefault();
+                cancelScheduledClose();
+                onSelect(it);
                 setQ(`${it.nameFa} — ${it.code}`);
                 setOpen(false);
-                }}
-                // Safari fallback (not strictly necessary after pointerdown)
-                onMouseDown={(e) => e.preventDefault()}
+              }}
+              onMouseDown={(e) => e.preventDefault()}
             >
-                <span>{it.nameFa}</span>
-                <span className="text-xs text-gray-500 font-mono ltr">{it.code}</span>
+              <span>{it.nameFa}</span>
+              <span className="text-xs text-gray-500 font-mono ltr">{it.code}</span>
             </li>
-            ))}
+          ))}
         </ul>,
         document.body
       )}

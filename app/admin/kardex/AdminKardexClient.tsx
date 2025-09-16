@@ -5,10 +5,10 @@ type Row = {
   id: string;
   code: string;
   nameFa: string;
-  unit?: string | null;
-  category?: string | null;
+  openingQty?: number | null;
+  storage?: string | null;
   currentQty?: number | null;
-  currentValue?: number | null;
+  orderPoint?: number | null;
 };
 
 export default function AdminKardexClient() {
@@ -16,7 +16,7 @@ export default function AdminKardexClient() {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
   const [adding, setAdding] = useState(false);
-  const [newRow, setNewRow] = useState<{code:string;nameFa:string;unit?:string;category?:string}>({ code:'', nameFa:'' });
+  const [newRow, setNewRow] = useState<{code:string;nameFa:string;storage?:string;currentQty?:number;openingQty?:number;orderPoint?:number;}>({ code:'', nameFa:'' });
 
   const load = async (query='') => {
     setLoading(true);
@@ -52,6 +52,13 @@ export default function AdminKardexClient() {
     else alert((await res.json().catch(()=>({}))).message || 'خطا در ایجاد');
   };
 
+  const numOrUndef = (v: string) => {
+  if (v === '') return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+  };
+
+
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-bold">مدیریت کاردکس</h1>
@@ -65,10 +72,61 @@ export default function AdminKardexClient() {
         {/* Add new row */}
         <div className="border rounded-lg p-3 space-y-2">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-            <input className="border rounded px-2 py-1 font-mono" dir="ltr" placeholder="کد" value={newRow.code} onChange={e=>setNewRow({...newRow, code:e.target.value})} />
-            <input className="border rounded px-2 py-1" placeholder="نام" value={newRow.nameFa} onChange={e=>setNewRow({...newRow, nameFa:e.target.value})} />
-            <input className="border rounded px-2 py-1" placeholder="واحد" value={newRow.unit ?? ''} onChange={e=>setNewRow({...newRow, unit:e.target.value})} />
-            <input className="border rounded px-2 py-1" placeholder="دسته" value={newRow.category ?? ''} onChange={e=>setNewRow({...newRow, category:e.target.value})} />
+            <input
+              className="border rounded px-2 py-1 font-mono"
+              dir="ltr"
+              placeholder="کد"
+              value={newRow.code}
+              onChange={e => setNewRow({ ...newRow, code: e.target.value })}
+            />
+
+            <input
+              className="border rounded px-2 py-1"
+              placeholder="نام کالا"
+              value={newRow.nameFa}
+              onChange={e => setNewRow({ ...newRow, nameFa: e.target.value })}
+            />
+
+            {/* ✅ parse to number (or undefined) */}
+            <input
+              type="number"
+              step="1"
+              className="border rounded px-2 py-1"
+              dir="ltr"
+              placeholder="موجودی"
+              value={newRow.currentQty ?? ''}                           // display
+              onChange={e => setNewRow({ ...newRow, currentQty: numOrUndef(e.target.value) })} // state
+            />
+
+            {/* ✅ parse to number (or undefined) */}
+            <input
+              type="number"
+              step="1"
+              className="border rounded px-2 py-1"
+              dir="ltr"
+              placeholder="موجودی ابتدای دوره"
+              value={newRow.openingQty ?? ''}
+              onChange={e => setNewRow({ ...newRow, openingQty: numOrUndef(e.target.value) })}
+            />
+
+            {/* ✅ make controlled with fallback */}
+            <input
+              className="border rounded px-2 py-1"
+              placeholder="انبار"
+              value={newRow.storage ?? ''}
+              onChange={e => setNewRow({ ...newRow, storage: e.target.value })}
+            />
+
+            {/* ✅ parse to number (or undefined) */}
+            <input
+              type="number"
+              step="1"
+              className="border rounded px-2 py-1"
+              dir="ltr"
+              placeholder="نقطه سفارش"
+              value={newRow.orderPoint ?? ''}
+              onChange={e => setNewRow({ ...newRow, orderPoint: numOrUndef(e.target.value) })}
+            />
           </div>
           <div className="text-left">
             <button disabled={adding} onClick={addRow} className="rounded-md bg-blue-600 text-white px-4 py-2 disabled:opacity-50">
@@ -85,10 +143,10 @@ export default function AdminKardexClient() {
                 <tr className="bg-gray-50 text-center">
                   <th className="p-2">کد</th>
                   <th className="p-2">نام</th>
-                  <th className="p-2">واحد</th>
-                  <th className="p-2">دسته</th>
                   <th className="p-2">موجودی</th>
-                  <th className="p-2">ارزش</th>
+                  <th className="p-2">موجودی ابتدای دوره</th>
+                  <th className="p-2">انبار</th>
+                  <th className="p-2">نقطه سفارش</th>
                   <th className="p-2"></th>
                 </tr>
               </thead>
@@ -100,16 +158,16 @@ export default function AdminKardexClient() {
                       <input className="border rounded px-2 py-1 w-full" value={it.nameFa ?? ''} onChange={e=>setRows(prev => prev.map(p => p.id===it.id ? { ...p, nameFa: e.target.value } : p))} onBlur={()=>saveCell(it.id, { nameFa: it.nameFa })} />
                     </td>
                     <td className="p-2">
-                      <input className="border rounded px-2 py-1 w-24" value={it.unit ?? ''} onChange={e=>setRows(prev => prev.map(p => p.id===it.id ? { ...p, unit: e.target.value } : p))} onBlur={()=>saveCell(it.id, { unit: it.unit })} />
-                    </td>
-                    <td className="p-2">
-                      <input className="border rounded px-2 py-1 w-32" value={it.category ?? ''} onChange={e=>setRows(prev => prev.map(p => p.id===it.id ? { ...p, category: e.target.value } : p))} onBlur={()=>saveCell(it.id, { category: it.category })} />
-                    </td>
-                    <td className="p-2" dir="ltr">
                       <input type="number" step="1" className="border rounded px-2 py-1 w-28" value={it.currentQty ?? ''} onChange={e=>setRows(prev => prev.map(p => p.id===it.id ? { ...p, currentQty: e.target.value === '' ? null : Number(e.target.value) } : p))} onBlur={()=>saveCell(it.id, { currentQty: typeof it.currentQty === 'number' ? it.currentQty : null })} />
                     </td>
+                    <td className="p-2">
+                      <input type="number" step="1" className="border rounded px-2 py-1 w-28" value={it.openingQty ?? ''} onChange={e=>setRows(prev => prev.map(p => p.id===it.id ? { ...p, openingQty: e.target.value === '' ? null : Number(e.target.value) } : p))} onBlur={()=>saveCell(it.id, { openingQty: typeof it.openingQty === 'number' ? it.openingQty : null })} />
+                    </td>
                     <td className="p-2" dir="ltr">
-                      <input type="number" step="1" className="border rounded px-2 py-1 w-28" value={it.currentValue ?? ''} onChange={e=>setRows(prev => prev.map(p => p.id===it.id ? { ...p, currentValue: e.target.value === '' ? null : Number(e.target.value) } : p))} onBlur={()=>saveCell(it.id, { currentValue: typeof it.currentValue === 'number' ? it.currentValue : null })} />
+                      <input className="border rounded px-2 py-1 w-full" value={it.storage ?? ''} onChange={e=>setRows(prev => prev.map(p => p.id===it.id ? { ...p, storage: e.target.value } : p))} onBlur={()=>saveCell(it.id, { storage: it.storage })} />
+                    </td>
+                    <td className="p-2" dir="ltr">
+                      <input type="number" step="1" className="border rounded px-2 py-1 w-28" value={it.orderPoint ?? ''} onChange={e=>setRows(prev => prev.map(p => p.id===it.id ? { ...p, orderPoint: e.target.value === '' ? null : Number(e.target.value) } : p))} onBlur={()=>saveCell(it.id, { orderPoint: typeof it.orderPoint === 'number' ? it.orderPoint : null })} />
                     </td>
                     <td className="p-2 text-left">
                       <button onClick={()=>delRow(it.id)} className="text-red-600 text-xs hover:underline">حذف</button>

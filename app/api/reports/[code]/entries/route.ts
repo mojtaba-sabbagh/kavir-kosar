@@ -18,9 +18,11 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
     const isAuto = decoded.toUpperCase().startsWith('RPT:FORM:');
     const formCode = isAuto ? decoded.slice('RPT:FORM:'.length) : decoded;
 
+    
     // Use uppercase **only** for the permission guard
-    const guardCode = (isAuto ? `RPT:FORM:${formCode}` : formCode).toUpperCase();
-
+    //const guardCode = (isAuto ? `RPT:FORM:${formCode}` : formCode).toUpperCase();
+    const guardCode = (isAuto ? `RPT:FORM:${formCode}` : formCode);
+    
     // Guard
     try {
       await requireReportView(guardCode);

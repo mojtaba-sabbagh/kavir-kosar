@@ -9,6 +9,26 @@ import type { FieldType, FormField } from '@prisma/client';
  * - Coerces checkbox to boolean
  * - date/datetime are strings (ISO) — keep server control
  */
+
+function zodForAtomicField(f: any): z.ZodTypeAny {
+  switch (f.type) {
+    case 'text': return z.string().trim();
+    case 'textarea': return z.string();
+    case 'number': return z.preprocess(v => (v === '' ? undefined : Number(v)), z.number());
+    case 'date': return z.string().regex(/^\d{4}-\d{2}-\d{2}/);
+    case 'datetime': return z.string(); // ISO
+    case 'select': return z.string();
+    case 'multiselect': return z.array(z.string());
+    case 'checkbox': return z.boolean();
+    case 'file': return z.string(); // storage key
+    case 'entryRef': return z.string().uuid();
+    case 'entryRefMulti': return z.array(z.string().uuid());
+    case 'kardexItem': return z.string();
+    case 'tableSelect': return z.string();
+    default: return z.any();
+  }
+}
+
 export function buildZodSchema(fields: Pick<FormField,
   'key'|'type'|'required'|'config'
 >[]) {
@@ -115,6 +135,7 @@ export function buildZodSchema(fields: Pick<FormField,
         shape[f.key] = f.required ? base.min(1) : base.optional().default([]);
         break;
       }
+      
       default: {
         // Fallback: accept string
         const s = z.string().trim();

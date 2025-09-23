@@ -62,7 +62,7 @@ async function main() {
     }
 
     ops.push(
-      prisma.FixedInformation.upsert({
+      prisma.fixedInformation.upsert({
         where: { code: item.code },
         update: item,
         create: item,

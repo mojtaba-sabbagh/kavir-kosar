@@ -14,7 +14,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <nav className="space-y-2 rounded-2xl border bg-white p-4">
             <div className="text-sm text-gray-500 text-center mb-2">مدیریت سامانه</div>
             <Link href="/admin" className="block rounded-md px-3 py-2 hover:bg-gray-100 no-underline">داشبورد</Link>
-            <Link href="/admin/kardex" className="block rounded-md px-3 py-2 hover:bg-gray-100 no-underline">کارتکس</Link>
+            <Link href="/admin/kardex" className="block rounded-md px-3 py-2 hover:bg-gray-100 no-underline">کاردکس</Link>
             <Link href="/admin/fixed-info" className="block rounded-md px-3 py-2 hover:bg-gray-100 no-underline">اطلاعات ثابت</Link>
             <Link href="/admin/users" className="block rounded-md px-3 py-2 hover:bg-gray-100 no-underline">کاربران</Link>
             <Link href="/admin/roles" className="block rounded-md px-3 py-2 hover:bg-gray-100 no-underline">گروه‌ها</Link>

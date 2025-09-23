@@ -26,7 +26,7 @@ async function main() {
   const wb = XLSX.readFile(file, { cellDates: true, raw: true, codepage: 65001 });
   console.log(`Sheets found: ${wb.SheetNames.join(', ')}`);
   
-  const ws = wb.Sheets[wb.SheetNames[1]];
+  const ws = wb.Sheets[wb.SheetNames[2]];
   const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' });
 
   console.log(`Found ${rows.length} rows`);

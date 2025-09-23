@@ -122,6 +122,7 @@ const FIELD_TYPES = [
   { v: 'entryRefMulti', t: 'ارجاع‌های متعدد' },
   { v: 'kardexItem', t: 'کاردکس کالا' },
   { v: 'tableSelect', t: 'انتخاب از جدول' },
+  { v: 'group', t: 'گروه تکرارشونده' },
 ];
 
 export default function FormBuilder({

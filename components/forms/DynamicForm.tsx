@@ -224,6 +224,7 @@ export default function DynamicForm({ form, fields }: Props) {
                   config={(cfg?.tableSelect ?? cfg ?? {}) as { table?: string; type?: string }}
                 />
               )}
+              
               {/* Add other field types as needed */}
             </div>
           );
@@ -304,6 +305,72 @@ function EntryMultiPicker({
       >
         {items.map(it => <option key={it.id} value={it.id}>{it.label}</option>)}
       </select>
+    </div>
+  );
+}
+
+function GroupField({
+  fieldKey,
+  label,
+  cfg,
+  value,
+  onChange,
+  renderAtomic, // (innerField, innerValue, setInner) => ReactNode
+}: {
+  fieldKey: string;
+  label: string;
+  cfg: any;         // cfg.group
+  value: any;       // [] | {} | undefined
+  onChange: (v: any) => void;
+  renderAtomic: (f: any, v: any, setV: (nv: any) => void) => React.ReactNode;
+}) {
+  const g = cfg.group || { repeatable: true, fields: [] as any[] };
+
+  if (!g.repeatable) {
+    const obj = (value && typeof value === 'object' && !Array.isArray(value)) ? value : {};
+    const setObj = (k: string, v: any) => onChange({ ...obj, [k]: v });
+
+    return (
+      <div className="space-y-2">
+        <div className="text-sm mb-1">{label}</div>
+        {(g.fields || []).map((f: any) => (
+          <div key={f.key}>
+            {renderAtomic(f, obj[f.key], nv => setObj(f.key, nv))}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // repeatable
+  const arr: any[] = Array.isArray(value) ? value : [];
+  const add = () => onChange([...(arr || []), {}]);
+  const del = (i: number) => onChange(arr.filter((_,idx)=>idx!==i));
+  const setIdx = (i: number, k: string, v: any) =>
+    onChange(arr.map((row, idx) => idx === i ? { ...row, [k]: v } : row));
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="text-sm">{label}</div>
+        <button type="button" className="rounded-md border px-2 py-1 hover:bg-gray-50" onClick={add}>افزودن</button>
+      </div>
+
+      {(arr || []).map((row, i) => (
+        <div key={i} className="border rounded-md p-3 space-y-2">
+          <div className="text-xs text-gray-500 mb-1">#{i+1}</div>
+          {(g.fields || []).map((f: any) => (
+            <div key={f.key}>
+              {renderAtomic(f, row?.[f.key], nv => setIdx(i, f.key, nv))}
+            </div>
+          ))}
+          <div className="text-left">
+            <button type="button" className="text-xs text-red-600 hover:underline" onClick={()=>del(i)}>حذف ردیف</button>
+          </div>
+        </div>
+      ))}
+
+      {(!arr || arr.length === 0) && <div className="text-xs text-gray-500">هیچ ردیفی اضافه نشده است</div>}
     </div>
   );
 }

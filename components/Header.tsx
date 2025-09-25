@@ -2,6 +2,8 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { getSession } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import ChangePasswordDialog from '@/components/ChangePasswordDialog';
+import UserMenu from '@/components/UserMenu';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -60,6 +62,7 @@ export default async function Header() {
 
               {user ? (
                 <div className="flex items-center gap-2">
+                  <UserMenu menuWidthClass="w-35 sm:w-35 max-w-[95vw]"/>
                   <div className="flex items-center gap-2 rounded-lg bg-gray-50/80 px-3 py-2 ring-1 ring-gray-200/50">
                     <div className="h-6 w-6 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold shadow-sm">
                       {(user.name || 'کاربر').charAt(0)}
@@ -68,20 +71,6 @@ export default async function Header() {
                       {user.name || 'کاربر'}
                     </span>
                   </div>
-                  
-                  <form action="/api/auth/logout" method="POST">
-                    <button
-                      type="submit"
-                      className="group relative overflow-hidden rounded-lg border border-gray-300 bg-white px-3 py-2 text-gray-700 font-medium transition-all hover:border-gray-400 hover:bg-gray-50 hover:shadow-sm active:scale-95"
-                    >
-                      <span className="relative z-10 flex items-center gap-1">
-                        <span className="text-xs">خروج</span>
-                        <svg className="h-3 w-3 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                        </svg>
-                      </span>
-                    </button>
-                  </form>
                 </div>
               ) : (
                 <Link
@@ -162,6 +151,7 @@ export default async function Header() {
 
                 {user ? (
                   <div className="flex items-center gap-4">
+                    <UserMenu menuWidthClass="w-35 sm:w-35 max-w-[95vw]"/>
                     <div className="flex items-center gap-3 rounded-lg bg-gray-50/80 px-4 py-2 ring-1 ring-gray-200/50">
                       <div className="h-8 w-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-sm font-bold shadow-sm">
                         {(user.name || 'کاربر').charAt(0)}
@@ -170,20 +160,6 @@ export default async function Header() {
                         {user.name || 'کاربر'}
                       </span>
                     </div>
-                    
-                    <form action="/api/auth/logout" method="POST">
-                      <button
-                        type="submit"
-                        className="group relative overflow-hidden rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-gray-700 font-medium transition-all hover:border-gray-400 hover:bg-gray-50 hover:shadow-sm active:scale-95"
-                      >
-                        <span className="relative z-10 flex items-center gap-2">
-                          خروج
-                          <svg className="h-4 w-4 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                          </svg>
-                        </span>
-                      </button>
-                    </form>
                   </div>
                 ) : (
                   <Link

@@ -2,7 +2,6 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { getSession } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import ChangePasswordDialog from '@/components/ChangePasswordDialog';
 import UserMenu from '@/components/UserMenu';
 
 export const dynamic = 'force-dynamic';
@@ -62,15 +61,7 @@ export default async function Header() {
 
               {user ? (
                 <div className="flex items-center gap-2">
-                  <UserMenu menuWidthClass="w-35 sm:w-35 max-w-[95vw]"/>
-                  <div className="flex items-center gap-2 rounded-lg bg-gray-50/80 px-3 py-2 ring-1 ring-gray-200/50">
-                    <div className="h-6 w-6 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold shadow-sm">
-                      {(user.name || 'کاربر').charAt(0)}
-                    </div>
-                    <span className="text-gray-700 font-medium text-xs max-w-16 truncate">
-                      {user.name || 'کاربر'}
-                    </span>
-                  </div>
+                  <UserMenu displayName={user.name || 'کاربر'} menuWidthClass="w-35 sm:w-35 max-w-[95vw]" />
                 </div>
               ) : (
                 <Link
@@ -151,15 +142,7 @@ export default async function Header() {
 
                 {user ? (
                   <div className="flex items-center gap-4">
-                    <UserMenu menuWidthClass="w-35 sm:w-35 max-w-[95vw]"/>
-                    <div className="flex items-center gap-3 rounded-lg bg-gray-50/80 px-4 py-2 ring-1 ring-gray-200/50">
-                      <div className="h-8 w-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-sm font-bold shadow-sm">
-                        {(user.name || 'کاربر').charAt(0)}
-                      </div>
-                      <span className="text-gray-700 font-medium text-sm">
-                        {user.name || 'کاربر'}
-                      </span>
-                    </div>
+                    <UserMenu displayName={user.name || 'کاربر'} menuWidthClass="w-35 sm:w-35 max-w-[95vw]" />
                   </div>
                 ) : (
                   <Link

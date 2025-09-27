@@ -1,29 +1,5 @@
 'use client';
 import Link from 'next/link';
-import { useState } from 'react';
-
-function ConfirmButton({ entryId }:{ entryId: string }) {
-  const [busy, setBusy] = useState(false);
-  const [ok, setOk] = useState(false);
-  const [err, setErr] = useState<string|null>(null);
-  const go = async () => {
-    setBusy(true); setErr(null);
-    const res = await fetch(`/api/forms/${entryId}/confirm`, { method: 'POST' });
-    const j = await res.json().catch(()=>({}));
-    setBusy(false);
-    if (res.ok) setOk(true); else setErr(j.message || 'خطا در تایید');
-  };
-  return (
-    <button onClick={go} disabled={busy||ok} className="rounded-md bg-blue-600 text-white px-3 py-1 disabled:opacity-50">
-      {ok ? 'تایید شد' : (busy ? '...' : 'تایید')}
-    </button>
-  );
-}
-
-function FinalConfirmButton({ entryId }:{ entryId: string }) {
-  // same code/style; you can keep a single component now since the API handles both
-  return <ConfirmButton entryId={entryId} />;
-}
 
 export default function ConfirmationsClient({ items }:{
   items: { taskId:string; kind:'confirm'|'final'; entryId:string; formCode:string; formTitleFa:string; createdAt:string | null }[];
@@ -44,20 +20,27 @@ export default function ConfirmationsClient({ items }:{
             <tr key={it.taskId} className="border-t">
               <td className="p-2">{it.formTitleFa}</td>
               <td className="p-2 font-mono ltr">{it.formCode}</td>
-              <td className="p-2">{it.createdAt ? new Date(it.createdAt).toLocaleString('fa-IR') : '—'}</td>
+              <td className="p-2">
+                {it.createdAt ? new Date(it.createdAt).toLocaleString('fa-IR') : '—'}
+              </td>
               <td className="p-2">
                 <div className="flex items-center gap-3">
-                  <Link href={`/entries/${it.entryId}`} className="rounded-md border px-3 py-1 hover:bg-gray-50">مشاهده</Link>
-                  {it.kind === 'final'
-                    ? <FinalConfirmButton entryId={it.entryId} />
-                    : <ConfirmButton entryId={it.entryId} />
-                    }
+                  <Link
+                    href={`/entries/${it.entryId}`}
+                    className="rounded-md border px-3 py-1 hover:bg-gray-50"
+                  >
+                    مشاهده
+                  </Link>
                 </div>
               </td>
             </tr>
           ))}
           {items.length === 0 && (
-            <tr><td colSpan={4} className="p-6 text-center text-gray-500">موردی یافت نشد</td></tr>
+            <tr>
+              <td colSpan={4} className="p-6 text-center text-gray-500">
+                موردی یافت نشد
+              </td>
+            </tr>
           )}
         </tbody>
       </table>

@@ -21,7 +21,7 @@ export async function GET(req: Request) {
         }
       : undefined,
     orderBy: [{ nameFa: 'asc' }, { code: 'asc' }],
-    take: 200,
+    take: 500,
   });
 
   return NextResponse.json({ ok: true, items });

@@ -23,8 +23,8 @@ export default function KardexLive() {
 
   setLoading(true);
   const url = q.trim()
-    ? `/api/kardex/search?q=${encodeURIComponent(q)}&limit=50`
-    : `/api/kardex/search?limit=100`; // fetch all when empty
+    ? `/api/kardex/search?q=${encodeURIComponent(q)}&limit=500`
+    : `/api/kardex/search?limit=500`; // fetch all when empty
 
   fetch(url, { signal: ac.signal })
     .then(r => r.json())

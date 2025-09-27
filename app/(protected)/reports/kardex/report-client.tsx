@@ -27,7 +27,7 @@ export default function KardexReportClient() {
     abortRef.current = ac;
 
     setLoading(true);
-    const url = `/api/reports/kardex?q=${encodeURIComponent(q)}&limit=100`;
+    const url = `/api/reports/kardex?q=${encodeURIComponent(q)}&limit=500`;
 
     fetch(url, { signal: ac.signal, cache: 'no-store' })
       .then(async (r) => {

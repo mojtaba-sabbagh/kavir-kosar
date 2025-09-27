@@ -1,7 +1,7 @@
-
 import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import Link from 'next/link';
+import ConfirmAction from '@/components/ConfirmAction'; // ⬅️ add this
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -19,7 +19,7 @@ function fmtDate(v: string | Date | null | undefined) {
 export default async function EntryByIdPage(props: { params: Promise<{ entryId: string }> }) {
   const { entryId } = await props.params;
   const id = entryId;
-  // Load entry + form fields (with config) to map labels
+
   const entry = await prisma.formEntry.findUnique({
     where: { id },
     select: {
@@ -33,13 +33,7 @@ export default async function EntryByIdPage(props: { params: Promise<{ entryId: 
           code: true,
           titleFa: true,
           fields: {
-            select: {
-              key: true,
-              labelFa: true,
-              type: true,
-              config: true,
-              order: true,
-            },
+            select: { key: true, labelFa: true, type: true, config: true, order: true },
           },
         },
       },
@@ -54,14 +48,13 @@ export default async function EntryByIdPage(props: { params: Promise<{ entryId: 
 
   const payload = (entry.payload ?? {}) as Record<string, any>;
 
-  // Pre-resolve Kardex items for display name (for fields of type kardexItem)
   const kardexCodes = fields
     .filter((f) => f.type === 'kardexItem')
     .map((f) => String(payload[f.key] ?? ''))
     .filter(Boolean);
 
   const tableselectCodes = fields
-    .filter((f) => f.type === 'tableSelect')
+    .filter((f) => f.type === 'tableSelect') // ⚠️ keep exact casing
     .map((f) => String(payload[f.key] ?? ''))
     .filter(Boolean);
 
@@ -83,13 +76,10 @@ export default async function EntryByIdPage(props: { params: Promise<{ entryId: 
     for (const it of items) tableselectMap[it.code] = { code: it.code, title: it.title };
   }
 
-  // Helper to format each field’s value using label + config
   function renderValue(f: typeof fields[number]) {
     const v = payload[f.key];
-
     if (v == null || v === '') return <span className="text-gray-400">—</span>;
 
-    // select / multiselect → map to option labels
     if (f.type === 'select') {
       const cfg = (f.config as any) ?? {};
       const opts: Array<{ value: string; label: string }> = Array.isArray(cfg.options) ? cfg.options : [];
@@ -104,24 +94,20 @@ export default async function EntryByIdPage(props: { params: Promise<{ entryId: 
       return <span>{labels.join('، ')}</span>;
     }
 
-    // kardexItem → show nameFa — code
     if (f.type === 'kardexItem') {
       const code = String(v);
       const it = kardexMap[code];
       return <span>{it ? `${it.nameFa} — ${it.code}` : code}</span>;
     }
 
-    // date / datetime
     if (f.type === 'date' || f.type === 'datetime') {
       return <span dir="ltr" className="font-mono">{fmtDate(v)}</span>;
     }
 
-    // number → show LTR monospace
     if (f.type === 'number') {
       return <span dir="ltr" className="font-mono">{String(v)}</span>;
     }
 
-    // file → link to stored path
     if (f.type === 'file') {
       const href = String(v);
       return (
@@ -131,43 +117,32 @@ export default async function EntryByIdPage(props: { params: Promise<{ entryId: 
       );
     }
 
-    // entryRef / entryRefMulti → show ids count (or list)
     if (f.type === 'entryRef') {
       return <span dir="ltr" className="font-mono">{String(v)}</span>;
     }
     if (f.type === 'entryRefMulti' && Array.isArray(v)) {
-      return (
-        <span className="font-mono" dir="ltr">
-          {v.join(', ')}
-        </span>
-      );
+      return <span className="font-mono" dir="ltr">{v.join(', ')}</span>;
     }
 
-    // checkbox → بله / خیر    
     if (f.type === 'checkbox') {
       return <span>{v ? 'بله' : 'خیر'}</span>;
     }
-    // tableselect
+
     if (f.type === 'tableSelect') {
       const code = String(v);
       const it = tableselectMap[code];
       return <span>{it ? `${it.title} — ${it.code}` : code}</span>;
     }
 
-    // default (text/textarea/checkbox)
     return <span>{String(v)}</span>;
   }
 
-  return (      
+  return (
     <div className="space-y-6">
-    
       <div className="flex justify-between items-center">
         <h1 className="text-xl font-bold">جزئیات فرم</h1>
-        <Link
-        href="/confirmations"
-        className="rounded-md border px-4 py-2 hover:bg-gray-50"
-        >
-        بازگشت
+        <Link href="/confirmations" className="rounded-md border px-4 py-2 hover:bg-gray-50">
+          بازگشت
         </Link>
       </div>
 
@@ -189,6 +164,12 @@ export default async function EntryByIdPage(props: { params: Promise<{ entryId: 
             </div>
           ))}
         </dl>
+      </div>
+
+      {/* Sticky confirm action after reviewing the form */}
+      <div className="sticky bottom-0 bg-white/80 backdrop-blur border-t p-4 flex items-center justify-between">
+        <span className="text-sm text-gray-600">پس از بررسی اطلاعات، تایید کنید.</span>
+        <ConfirmAction entryId={id} />
       </div>
     </div>
   );

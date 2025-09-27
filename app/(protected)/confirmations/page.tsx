@@ -1,5 +1,6 @@
 import ConfirmationsClient from './client';
 import { getMyPendingList } from '@/lib/confirm';
+import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,6 +17,11 @@ export default async function ConfirmationsPage(props: { searchParams?: Promise<
     <div className="space-y-4">
       <h1 className="text-xl font-bold">موارد در انتظار تایید</h1>
       <ConfirmationsClient items={normalized} />
+      <div className="flex justify-center">
+        <Link href="/" className="rounded-md border px-4 py-2 hover:bg-gray-50">
+          بازگشت
+        </Link>
+      </div>
     </div>
   );
 }

@@ -2,7 +2,6 @@
 import { notFound } from 'next/navigation';
 import { prisma } from '@/lib/db';
 import Link from 'next/link';
-import { cloneElement } from 'react';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -61,6 +60,11 @@ export default async function EntryByIdPage(props: { params: Promise<{ entryId: 
     .map((f) => String(payload[f.key] ?? ''))
     .filter(Boolean);
 
+  const tableselectCodes = fields
+    .filter((f) => f.type === 'tableSelect')
+    .map((f) => String(payload[f.key] ?? ''))
+    .filter(Boolean);
+
   const kardexMap: Record<string, { code: string; nameFa: string }> = {};
   if (kardexCodes.length) {
     const items = await prisma.kardexItem.findMany({
@@ -68,6 +72,15 @@ export default async function EntryByIdPage(props: { params: Promise<{ entryId: 
       select: { code: true, nameFa: true },
     });
     for (const it of items) kardexMap[it.code] = { code: it.code, nameFa: it.nameFa };
+  }
+
+  const tableselectMap: Record<string, { code: string; title: string }> = {};
+  if (tableselectCodes.length) {
+    const items = await prisma.fixedInformation.findMany({
+      where: { code: { in: tableselectCodes } },
+      select: { code: true, title: true },
+    });
+    for (const it of items) tableselectMap[it.code] = { code: it.code, title: it.title };
   }
 
   // Helper to format each field’s value using label + config
@@ -130,11 +143,18 @@ export default async function EntryByIdPage(props: { params: Promise<{ entryId: 
       );
     }
 
-    // default (text/textarea/checkbox)
+    // checkbox → بله / خیر    
     if (f.type === 'checkbox') {
       return <span>{v ? 'بله' : 'خیر'}</span>;
     }
+    // tableselect
+    if (f.type === 'tableSelect') {
+      const code = String(v);
+      const it = tableselectMap[code];
+      return <span>{it ? `${it.title} — ${it.code}` : code}</span>;
+    }
 
+    // default (text/textarea/checkbox)
     return <span>{String(v)}</span>;
   }
 

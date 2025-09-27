@@ -42,7 +42,7 @@ function KardexConfigPanel({
   };
 
   return (
-    <div className="mt-4 border-t pt-4 space-y-3" dir="rtl">
+    <div className="mt-4 border-t pt-4 space-y-3 text-black" dir="rtl">
       <h4 className="font-semibold text-sm">تنظیمات کاردکس</h4>
 
       <label className="block text-sm">

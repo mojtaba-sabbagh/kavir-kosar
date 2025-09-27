@@ -102,6 +102,7 @@ export default function UsersCreateForm({ allRoles }: { allRoles: Role[] }) {
             onChange={e => setPassword(e.target.value)}
             placeholder="حداقل ۶ کاراکتر"
             required
+            dir="ltr"
           />
         </div>
         <div>
@@ -114,6 +115,7 @@ export default function UsersCreateForm({ allRoles }: { allRoles: Role[] }) {
             onChange={e => setPasswordConfirm(e.target.value)}
             placeholder="تکرار رمز عبور"
             required
+            dir="ltr"
           />
         </div>
       </div>

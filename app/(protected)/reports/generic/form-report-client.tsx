@@ -230,6 +230,115 @@ function renderValueGeneric(
     return map?.[String(value)] ?? String(value);
   }
 
+  // --- Excel export state
+const [exporting, setExporting] = useState(false);
+
+// Normalize ESM/CJS import of xlsx
+function getXLSX(mod: any) {
+  return mod?.default ?? mod;
+}
+
+// Preload labels for entryRef / entryRefMulti values found in current rows
+async function preloadEntryLabelsForRows(rws: Row[]) {
+  const need = new Set<string>();
+  for (const r of rws) {
+    for (const k of visible) {
+      const t = typeByKey[k];
+      const v = r.payload?.[k];
+      if (t === 'entryRef' && typeof v === 'string' && v) need.add(v);
+      if (t === 'entryRefMulti' && Array.isArray(v)) {
+        v.forEach((id: any) => (typeof id === 'string' && id) && need.add(id));
+      }
+    }
+  }
+  await Promise.all(Array.from(need).map((id) => ensureEntryLabel(id)));
+}
+
+// Turn a cell value into exportable text (uses your existing helpers)
+function valueForExport(key: string, raw: any): string {
+  const t = typeByKey[key];
+
+  // entryRef / entryRefMulti -> use cached labels (fallback to raw ids)
+  if (t === 'entryRef') {
+    const id = typeof raw === 'string' ? raw : '';
+    const lbl = entryLabelCache[id];
+    return lbl ? `${lbl} (${id})` : (id || '');
+  }
+  if (t === 'entryRefMulti') {
+    const ids = Array.isArray(raw) ? raw : [];
+    const texts = ids.map((id) => entryLabelCache[id] ? `${entryLabelCache[id]} (${id})` : String(id));
+    return texts.join('، ');
+  }
+
+  // dates / selects / tableSelect / kardexItem handled via your generic renderer
+  const rendered = renderValueGeneric(key, raw, schemaArr, displayMaps);
+  return String(rendered ?? '');
+}
+
+// Auto size columns by content length
+function autosizeCols(rowsAoA: any[][]) {
+  const colCount = Math.max(...rowsAoA.map(r => r.length));
+  const widths = Array.from({ length: colCount }, (_, c) => {
+    let max = 8;
+    for (const row of rowsAoA) {
+      const cell = row[c] == null ? '' : String(row[c]);
+      max = Math.max(max, cell.length);
+    }
+    // Excel width in "characters" — cap to something reasonable
+    return { wch: Math.min(max + 2, 40) };
+  });
+  return widths;
+}
+
+async function exportCurrentPageToExcel() {
+  if (!rows?.length) {
+    alert('چیزی برای خروجی وجود ندارد');
+    return;
+  }
+
+  setExporting(true);
+  try {
+    // Make sure labels for refs exist so we export readable text
+    await preloadEntryLabelsForRows(rows);
+
+    const mod = await import('xlsx');
+    const XLSX = getXLSX(mod);
+
+    // Header row (same order as table)
+    const header = [
+      '#',
+      'تاریخ ایجاد',
+      ...visible.map(k => labels[k] || k),
+      'وضعیت',
+    ];
+
+    // Data rows
+    const body = rows.map((r, i) => {
+      const rowIdx = (meta!.page - 1) * meta!.pageSize + i + 1;
+      const created = formatJalali(r.createdAt, true);
+      const payloadCells = visible.map(k => valueForExport(k, r.payload?.[k]));
+      const status = statusFa(r.status);
+      return [rowIdx, created, ...payloadCells, status];
+    });
+
+    const aoa = [header, ...body];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = autosizeCols(aoa);
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Report');
+
+    const fname =
+      `${(meta?.titleFa || meta?.formCode || code)}-گزارش-${new Date().toISOString().slice(0,10)}.xlsx`;
+    XLSX.writeFile(wb, fname);
+  } catch (e: any) {
+    console.error(e);
+    setErr(e?.message ? `خطا در ساخت فایل اکسل: ${e.message}` : 'خطا در ساخت فایل اکسل');
+  } finally {
+    setExporting(false);
+  }
+}
+
 return (
   <div className="space-y-4">
       {err && <div className="text-red-600 text-sm">{err}</div>}
@@ -367,7 +476,18 @@ return (
             >
               حذف فیلترها
             </button>
+
+            <button
+              type="button"
+              onClick={exportCurrentPageToExcel}
+              disabled={exporting || !rows?.length}
+              className="rounded-md border px-3 py-1 hover:bg-gray-50 disabled:opacity-50"
+              title="خروجی اکسل از سطرهای صفحه فعلی با فیلتر و مرتب‌سازی فعلی"
+            >
+              {exporting ? 'در حال ساخت اکسل…' : 'خروجی اکسل'}
+            </button>
           </div>
+
         </div>
       </div>
 

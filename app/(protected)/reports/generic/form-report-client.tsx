@@ -1,10 +1,14 @@
+
+
 'use client';
 
-// guard so we only initialize order once from server meta
 import { useEffect, useMemo, useRef, useState } from 'react';
 import JDateRangeFilter from '@/components/ui/JDateRangeFilter';
 import JDateTimeRangeFilter from '@/components/ui/JDateTimeRangeFilter';
 
+// at the top with other imports
+import { useSearchParams } from 'next/navigation';
+// ---- Types ----
 type Meta = {
   formCode: string;
   titleFa: string;
@@ -15,11 +19,40 @@ type Meta = {
   filterableKeys?: string[];
   orderableKeys?: string[];
   defaultOrder?: { key?: string; dir?: 'asc' | 'desc' } | null;
+  canSubmit?: boolean;
 };
-type Row = { id: string; createdAt: string; status: string; payload: Record<string, any> };
+type EntryStatus = 'draft' | 'submitted' | 'confirmed' | 'finalConfirmed';
+type Row = { id: string; createdAt: string; status: EntryStatus; payload: Record<string, any> };
 type SchemaField = { key: string; type: string; config?: any };
 
-export default function FormReportClient({ code }: { code: string }) {
+// ---- Status helpers (shared by UI) ----
+const LOCKED_STATUSES: EntryStatus[] = ['confirmed', 'finalConfirmed'];
+function isLockedStatus(s: EntryStatus) {
+  return LOCKED_STATUSES.includes(s);
+}
+function canMutateRow(row: { status: EntryStatus }, canSend: boolean) {
+  return !!canSend && !isLockedStatus(row.status); // only 'draft' or 'submitted'
+}
+function statusFa(s: EntryStatus) {
+  switch (s) {
+    case 'draft':
+      return 'پیش‌نویس';
+    case 'submitted':
+      return 'ارسال شده';
+    case 'confirmed':
+      return 'تأیید شده';
+    case 'finalConfirmed':
+      return 'تأیید نهایی';
+  }
+}
+
+export default function FormReportClient({
+  code,
+  canSend = false, 
+}: {
+  code: string;
+  canSend?: boolean;
+}) {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
   const [labels, setLabels] = useState<Record<string, string>>({});
@@ -27,11 +60,20 @@ export default function FormReportClient({ code }: { code: string }) {
   const [schema, setSchema] = useState<SchemaField[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-
+  // Derive from server meta (no extra state → no flicker/race)
+  const canSendClient = useMemo(
+    () => Boolean(canSend || meta?.canSubmit),
+    [canSend, meta?.canSubmit]
+  );
   // order state (initialize with sensible defaults; update from meta when it arrives)
   const [orderKey, setOrderKey] = useState<string>('createdAt');
-  const [orderDir, setOrderDir] = useState<'asc'|'desc'>('desc');
-  
+  const [orderDir, setOrderDir] = useState<'asc' | 'desc'>('desc');
+
+  // inside FormReportClient component, near other hooks:
+  const searchParams = useSearchParams();
+  const DEBUG = searchParams.get('debug') === '1';
+  const FORCE = searchParams.get('force') === '1';
+
   // filters: key -> string | {from?: string; to?: string}
   type Filters = Record<string, any>;
   const [filters, setFilters] = useState<Filters>({});
@@ -39,101 +81,126 @@ export default function FormReportClient({ code }: { code: string }) {
   // guard so we only initialize order once from server meta
   const didInitOrder = useRef(false);
 
-  // …inside the component:
-const [entryModal, setEntryModal] = useState<{
-  open: boolean; id?: string; loading?: boolean; data?: any; error?: string | null;
-}>({ open: false, loading: false, error: null });
+  // row actions: modal for entry details
+  const [entryModal, setEntryModal] = useState<{
+    open: boolean;
+    id?: string;
+    loading?: boolean;
+    data?: any;
+    error?: string | null;
+  }>({ open: false, loading: false, error: null });
 
-// cache for link labels to avoid refetch each render
-const [entryLabelCache, setEntryLabelCache] = useState<Record<string, string>>({});
-// build qs stays the same (depends on orderKey/orderDir)
-const qs = useMemo(() => {
+  // cache for link labels to avoid refetch each render
+  const [entryLabelCache, setEntryLabelCache] = useState<Record<string, string>>({});
+
+  // trigger refetch after mutations
+  const [reloadTick, setReloadTick] = useState(0);
+  const refresh = () => setReloadTick((t) => t + 1);
+
+  // Build querystring: depends on orderKey/orderDir/filters/schema/filterableKeys
+  const qs = useMemo(() => {
   const p = new URLSearchParams();
 
-  // order & paging
-  p.set('order', orderKey || 'createdAt');
-  p.set('dir', orderDir || 'desc');
-  p.set('page', '1');
-  p.set('pageSize', '20');
 
-  // determine which keys to serialize:
-  // prefer filterableKeys from server; fallback to whatever user edited (filters keys)
-  const allowed = new Set([
-    ...(meta?.filterableKeys ?? []),
-    ...Object.keys(filters ?? {})
-  ]);
+    // order & paging
+    p.set('order', orderKey || 'createdAt');
+    p.set('dir', orderDir || 'desc');
+    p.set('page', '1');
+    p.set('pageSize', '20');
+    // forward client ?debug=1 to the API (so API returns _debug)
+    if (DEBUG) p.set('debug', '1');
+    // determine which keys to serialize:
+    // prefer filterableKeys from server; fallback to whatever user edited (filters keys)
+    const allowed = new Set([...(meta?.filterableKeys ?? []), ...Object.keys(filters ?? {})]);
 
-  for (const k of allowed) {
-    const t = schema.find(s => s.key === k)?.type || 'text';
-    const v = (filters as any)?.[k];
+    for (const k of allowed) {
+      const t = schema.find((s) => s.key === k)?.type || 'text';
+      const v = (filters as any)?.[k];
 
-    if (t === 'date' || t === 'datetime') {
-      if (v?.from) p.set(`filter_${k}_from`, v.from);
-      if (v?.to)   p.set(`filter_${k}_to`,   v.to);
-    } else {
-      if (v != null && v !== '') p.set(`filter_${k}`, String(v));
-    }
-  }
-
-  return `?${p.toString()}`;
-}, [orderKey, orderDir, filters, meta?.filterableKeys, schema]);
-
-  // Fetch data
-useEffect(() => {
-  let cancel = false;
-  (async () => {
-    setLoading(true); setErr(null);
-    try {
-      const res = await fetch(`/api/reports/${encodeURIComponent(code)}/entries${qs}`, { cache: 'no-store' });
-      const j = await res.json();
-
-      if (!cancel) {
-        setMeta(j.meta);
-        setLabels(j.labels || {});
-        setRows(Array.isArray(j.rows) ? j.rows : []);
-        setDisplayMaps(j.displayMaps && typeof j.displayMaps === 'object' ? j.displayMaps : {});
-        setSchema(Array.isArray(j.schema) ? j.schema : []);  // 👈 important
-
-
-        // Initialize order ONLY ONCE from server-provided defaults
-        if (!didInitOrder.current) {
-          const initialKey = j.meta?.orderApplied || j.meta?.defaultOrder?.key || 'createdAt';
-          const initialDir = j.meta?.defaultOrder?.dir || 'desc';
-          setOrderKey(initialKey);
-          setOrderDir(initialDir);
-          didInitOrder.current = true;
-        }
+      if (t === 'date' || t === 'datetime') {
+        if (v?.from) p.set(`filter_${k}_from`, v.from);
+        if (v?.to) p.set(`filter_${k}_to`, v.to);
+      } else {
+        if (v != null && v !== '') p.set(`filter_${k}`, String(v));
       }
-    } catch (e: any) {
-      if (!cancel) setErr(e?.message || 'خطا');
-    } finally {
-      if (!cancel) setLoading(false);
     }
-  })();
-  return () => { cancel = true; };
-}, [code, qs]);
 
-  const schemaArr = Array.isArray(schema) ? schema : [];   // 👈 normalize once
+    return `?${p.toString()}`;
+  }, [orderKey, orderDir, filters, meta?.filterableKeys, schema]);
+
+  // Fetch data (refires on reloadTick)
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      setLoading(true);
+      setErr(null);
+      try {
+        const res = await fetch(
+          `/api/reports/${encodeURIComponent(code)}/entries${qs}`,
+          { cache: 'no-store', credentials: 'include', }
+        );
+        const j = await res.json();
+
+        if (!cancel) {
+          setMeta(j.meta);
+          setLabels(j.labels || {});
+          setRows(Array.isArray(j.rows) ? j.rows : []);
+          setDisplayMaps(
+            j.displayMaps && typeof j.displayMaps === 'object' ? j.displayMaps : {}
+          );
+          setSchema(Array.isArray(j.schema) ? j.schema : []); // 👈 important
+
+          // Initialize order ONLY ONCE from server-provided defaults
+          if (!didInitOrder.current) {
+            const initialKey =
+              j.meta?.orderApplied || j.meta?.defaultOrder?.key || 'createdAt';
+            const initialDir = j.meta?.defaultOrder?.dir || 'desc';
+            setOrderKey(initialKey);
+            setOrderDir(initialDir);
+            didInitOrder.current = true;
+          }
+        }
+      } catch (e: any) {
+        if (!cancel) setErr(e?.message || 'خطا');
+      } finally {
+        if (!cancel) setLoading(false);
+      }
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [code, qs, reloadTick]);
+  
+  const schemaArr = Array.isArray(schema) ? schema : []; // 👈 normalize once
+
   // Build map key->type
   const typeByKey = useMemo(() => {
-  const m: Record<string, string> = {};
-  schemaArr.forEach(f => { m[f.key] = f.type; });
-  return m;
-}, [schemaArr]);
+    const m: Record<string, string> = {};
+    schemaArr.forEach((f) => {
+      m[f.key] = f.type;
+    });
+    return m;
+  }, [schemaArr]);
 
-const visible = useMemo(() => {
-  if (meta?.visibleColumns?.length) return meta.visibleColumns;
-  if (schemaArr.length) return schemaArr.map(f => f.key);
-  if (rows[0]?.payload) return Object.keys(rows[0].payload);
-  return [];
-}, [meta, schemaArr, rows]);
+  const visible = useMemo(() => {
+    if (meta?.visibleColumns?.length) return meta.visibleColumns;
+    if (schemaArr.length) return schemaArr.map((f) => f.key);
+    if (rows[0]?.payload) return Object.keys(rows[0].payload);
+    return [];
+  }, [meta, schemaArr, rows]);
 
   // Format persian date
   function formatJalali(dateLike: string | number | Date, withTime = false) {
     try {
       const d = new Date(dateLike);
       const opts: Intl.DateTimeFormatOptions = withTime
-        ? { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }
+        ? {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+          }
         : { year: 'numeric', month: '2-digit', day: '2-digit' };
       return new Intl.DateTimeFormat('fa-IR-u-ca-persian', opts).format(d);
     } catch {
@@ -141,37 +208,37 @@ const visible = useMemo(() => {
     }
   }
 
-
-function renderValueGeneric(
+  // Generic value renderer for modal/export (maps + date formats)
+  function renderValueGeneric(
     key: string,
     value: any,
     schemaArr: { key: string; type: string; config?: any }[] | undefined,
     maps: Record<string, Record<string, string>> | undefined
-) {
-  const t = schemaArr?.find(s => s.key === key)?.type;
+  ) {
+    const t = schemaArr?.find((s) => s.key === key)?.type;
 
-  // entryRef / entryRefMulti handled by the table renderer (links). For modal, show plain mapped values:
-  if (t === 'entryRef' || t === 'entryRefMulti') {
-    if (Array.isArray(value)) return value.join('، ');
-    return value ?? '';
+    // entryRef / entryRefMulti handled elsewhere (we show raw ids here)
+    if (t === 'entryRef' || t === 'entryRefMulti') {
+      if (Array.isArray(value)) return value.join('، ');
+      return value ?? '';
+    }
+
+    // date / datetime
+    if (t === 'date' && value) return formatJalali(value, false);
+    if (t === 'datetime' && value) return formatJalali(value, true);
+
+    // select-like (includes tableSelect & kardexItem because we pass maps)
+    const map = maps?.[key];
+    if (Array.isArray(value)) return value.map((v) => map?.[String(v)] ?? String(v)).join('، ');
+    if (value == null) return '';
+    return map?.[String(value)] ?? String(value);
   }
-
-  // date / datetime
-  if (t === 'date' && value) return formatJalali(value, false);
-  if (t === 'datetime' && value) return formatJalali(value, true);
-
-  // select-like (includes tableSelect & kardexItem because we pass maps)
-  const map = maps?.[key];
-  if (Array.isArray(value)) return value.map(v => map?.[String(v)] ?? String(v)).join('، ');
-  if (value == null) return '';
-  return map?.[String(value)] ?? String(value);
-}
 
   // Render cell by type + map
   function renderCell(key: string, value: any) {
     const t = typeByKey[key];
 
-      // 1) entryRef -> clickable link with form title
+    // entryRef -> clickable link with form title
     if (t === 'entryRef' && typeof value === 'string' && value) {
       const label = entryLabelCache[value];
       if (!label) {
@@ -190,7 +257,7 @@ function renderValueGeneric(
       );
     }
 
-    // 1b) entryRefMulti -> chips of links
+    // entryRefMulti -> chips of links
     if (t === 'entryRefMulti' && Array.isArray(value)) {
       return (
         <div className="flex flex-wrap gap-1">
@@ -213,6 +280,7 @@ function renderValueGeneric(
         </div>
       );
     }
+
     // date/datetime
     if (t === 'date' && value) return formatJalali(value, false);
     if (t === 'datetime' && value) return formatJalali(value, true);
@@ -231,116 +299,182 @@ function renderValueGeneric(
   }
 
   // --- Excel export state
-const [exporting, setExporting] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
-// Normalize ESM/CJS import of xlsx
-function getXLSX(mod: any) {
-  return mod?.default ?? mod;
-}
+  // Normalize ESM/CJS import of xlsx
+  function getXLSX(mod: any) {
+    return mod?.default ?? mod;
+  }
 
-// Preload labels for entryRef / entryRefMulti values found in current rows
-async function preloadEntryLabelsForRows(rws: Row[]) {
-  const need = new Set<string>();
-  for (const r of rws) {
-    for (const k of visible) {
-      const t = typeByKey[k];
-      const v = r.payload?.[k];
-      if (t === 'entryRef' && typeof v === 'string' && v) need.add(v);
-      if (t === 'entryRefMulti' && Array.isArray(v)) {
-        v.forEach((id: any) => (typeof id === 'string' && id) && need.add(id));
+  // Preload labels for entryRef / entryRefMulti values found in current rows
+  async function preloadEntryLabelsForRows(rws: Row[]) {
+    const need = new Set<string>();
+    for (const r of rws) {
+      for (const k of visible) {
+        const t = typeByKey[k];
+        const v = r.payload?.[k];
+        if (t === 'entryRef' && typeof v === 'string' && v) need.add(v);
+        if (t === 'entryRefMulti' && Array.isArray(v)) {
+          v.forEach((id: any) => typeof id === 'string' && id && need.add(id));
+        }
       }
     }
-  }
-  await Promise.all(Array.from(need).map((id) => ensureEntryLabel(id)));
-}
-
-// Turn a cell value into exportable text (uses your existing helpers)
-function valueForExport(key: string, raw: any): string {
-  const t = typeByKey[key];
-
-  // entryRef / entryRefMulti -> use cached labels (fallback to raw ids)
-  if (t === 'entryRef') {
-    const id = typeof raw === 'string' ? raw : '';
-    const lbl = entryLabelCache[id];
-    return lbl ? `${lbl} (${id})` : (id || '');
-  }
-  if (t === 'entryRefMulti') {
-    const ids = Array.isArray(raw) ? raw : [];
-    const texts = ids.map((id) => entryLabelCache[id] ? `${entryLabelCache[id]} (${id})` : String(id));
-    return texts.join('، ');
+    await Promise.all(Array.from(need).map((id) => ensureEntryLabel(id)));
   }
 
-  // dates / selects / tableSelect / kardexItem handled via your generic renderer
-  const rendered = renderValueGeneric(key, raw, schemaArr, displayMaps);
-  return String(rendered ?? '');
-}
+  // Turn a cell value into exportable text
+  function valueForExport(key: string, raw: any): string {
+    const t = typeByKey[key];
 
-// Auto size columns by content length
-function autosizeCols(rowsAoA: any[][]) {
-  const colCount = Math.max(...rowsAoA.map(r => r.length));
-  const widths = Array.from({ length: colCount }, (_, c) => {
-    let max = 8;
-    for (const row of rowsAoA) {
-      const cell = row[c] == null ? '' : String(row[c]);
-      max = Math.max(max, cell.length);
+    // entryRef / entryRefMulti -> use cached labels (fallback to raw ids)
+    if (t === 'entryRef') {
+      const id = typeof raw === 'string' ? raw : '';
+      const lbl = entryLabelCache[id];
+      return lbl ? `${lbl} (${id})` : id || '';
     }
-    // Excel width in "characters" — cap to something reasonable
-    return { wch: Math.min(max + 2, 40) };
-  });
-  return widths;
-}
+    if (t === 'entryRefMulti') {
+      const ids = Array.isArray(raw) ? raw : [];
+      const texts = ids.map((id) =>
+        entryLabelCache[id] ? `${entryLabelCache[id]} (${id})` : String(id)
+      );
+      return texts.join('، ');
+    }
 
-async function exportCurrentPageToExcel() {
-  if (!rows?.length) {
-    alert('چیزی برای خروجی وجود ندارد');
-    return;
+    // dates / selects / tableSelect / kardexItem handled via generic renderer
+    const rendered = renderValueGeneric(key, raw, schemaArr, displayMaps);
+    return String(rendered ?? '');
   }
 
-  setExporting(true);
-  try {
-    // Make sure labels for refs exist so we export readable text
-    await preloadEntryLabelsForRows(rows);
-
-    const mod = await import('xlsx');
-    const XLSX = getXLSX(mod);
-
-    // Header row (same order as table)
-    const header = [
-      '#',
-      'تاریخ ایجاد',
-      ...visible.map(k => labels[k] || k),
-      'وضعیت',
-    ];
-
-    // Data rows
-    const body = rows.map((r, i) => {
-      const rowIdx = (meta!.page - 1) * meta!.pageSize + i + 1;
-      const created = formatJalali(r.createdAt, true);
-      const payloadCells = visible.map(k => valueForExport(k, r.payload?.[k]));
-      const status = statusFa(r.status);
-      return [rowIdx, created, ...payloadCells, status];
+  // Auto size columns by content length
+  function autosizeCols(rowsAoA: any[][]) {
+    const colCount = Math.max(...rowsAoA.map((r) => r.length));
+    const widths = Array.from({ length: colCount }, (_, c) => {
+      let max = 8;
+      for (const row of rowsAoA) {
+        const cell = row[c] == null ? '' : String(row[c]);
+        max = Math.max(max, cell.length);
+      }
+      // Excel width in "characters" — cap to something reasonable
+      return { wch: Math.min(max + 2, 40) };
     });
-
-    const aoa = [header, ...body];
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = autosizeCols(aoa);
-
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Report');
-
-    const fname =
-      `${(meta?.titleFa || meta?.formCode || code)}-گزارش-${new Date().toISOString().slice(0,10)}.xlsx`;
-    XLSX.writeFile(wb, fname);
-  } catch (e: any) {
-    console.error(e);
-    setErr(e?.message ? `خطا در ساخت فایل اکسل: ${e.message}` : 'خطا در ساخت فایل اکسل');
-  } finally {
-    setExporting(false);
+    return widths;
   }
-}
 
-return (
-  <div className="space-y-4">
+  async function exportCurrentPageToExcel() {
+    if (!rows?.length) {
+      alert('چیزی برای خروجی وجود ندارد');
+      return;
+    }
+
+    setExporting(true);
+    try {
+      // Make sure labels for refs exist so we export readable text
+      await preloadEntryLabelsForRows(rows);
+
+      const mod = await import('xlsx');
+      const XLSX = getXLSX(mod);
+
+      // Header row (same order as table)
+      const header = ['#', 'تاریخ ایجاد', ...visible.map((k) => labels[k] || k), 'وضعیت'];
+
+      // Data rows
+      const body = rows.map((r, i) => {
+        const rowIdx = (meta!.page - 1) * meta!.pageSize + i + 1;
+        const created = formatJalali(r.createdAt, true);
+        const payloadCells = visible.map((k) => valueForExport(k, r.payload?.[k]));
+        const status = statusFa(r.status);
+        return [rowIdx, created, ...payloadCells, status];
+      });
+
+      const aoa = [header, ...body];
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws['!cols'] = autosizeCols(aoa);
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Report');
+
+      const fname = `${
+        meta?.titleFa || meta?.formCode || code
+      }-گزارش-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      XLSX.writeFile(wb, fname);
+    } catch (e: any) {
+      console.error(e);
+      setErr(e?.message ? `خطا در ساخت فایل اکسل: ${e.message}` : 'خطا در ساخت فایل اکسل');
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  // Edit modal state
+  const [editModal, setEditModal] = useState<{
+    open: boolean;
+    id?: string;
+    payload?: Record<string, any>;
+    saving?: boolean;
+    error?: string | null;
+  }>({ open: false, error: null });
+
+  // open editor only if eligible
+  function openEdit(row: Row) {
+    if (!canSendClient) return;
+    if (row.status !== 'submitted' && row.status !== 'draft') return;
+    setEditModal({
+      open: true,
+      id: row.id,
+      payload: { ...(row.payload ?? {}) },
+      saving: false,
+      error: null,
+    });
+  }
+
+  async function saveEdit() {
+    if (!editModal.id) return;
+    setEditModal((m) => ({ ...m, saving: true, error: null }));
+    try {
+      const r = await fetch(`/api/entries/${editModal.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payload: editModal.payload }),
+        credentials: 'include',
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j?.message || 'خطا در ذخیره تغییرات');
+      }
+      setEditModal({ open: false, error: null });
+      refresh(); // reload table
+    } catch (e: any) {
+      setEditModal((m) => ({ ...m, saving: false, error: e?.message || 'خطا' }));
+    }
+  }
+
+  async function handleDelete(id: string) {
+  if (!canSendClient) return;
+    const ok = confirm('آیا از حذف این آیتم مطمئن هستید؟ این عمل غیرقابل بازگشت است.');
+    if (!ok) return;
+    try {
+      const r = await fetch(`/api/entries/${id}`, { method: 'DELETE', credentials: 'include', });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.message || 'خطا در حذف');
+      refresh();
+    } catch (e: any) {
+      alert(e?.message || 'خطا در حذف');
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {DEBUG && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs ltr">
+          <div>meta.canSubmit: {String(meta?.canSubmit)}</div>
+          <div>canSendClient (derived): {String(canSendClient)}</div>          
+          <div>formCode(meta): {String(meta?.formCode)}</div>
+          <div>rows: {rows.length}</div>
+          <div>statuses: {[...new Set(rows.map(r => r.status))].join(', ') || '(none)'}</div>
+        </div>
+      )}
+
+
       {err && <div className="text-red-600 text-sm">{err}</div>}
 
       {/* Controls */}
@@ -350,35 +484,41 @@ return (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3" dir="rtl">
             {meta.filterableKeys.map((k) => {
               const label = labels[k] || k;
-              const field = schema.find(s => s.key === k);
+              const field = schema.find((s) => s.key === k);
               const t = field?.type || 'text';
               const cfg = (field?.config ?? {}) as any;
               const v = filters[k];
 
-              // --- tableSelect: select populated by configured table/type ---
-              if (t === 'tableSelect' && field?.config?.tableSelect?.type && field?.config?.tableSelect) {
+              // tableSelect: select populated by configured table/type
+              if (
+                t === 'tableSelect' &&
+                field?.config?.tableSelect?.type &&
+                field?.config?.tableSelect
+              ) {
                 const ts = field.config.tableSelect;
                 return (
                   <TableSelectFilter
                     key={k}
                     label={label}
-                    table={ts.table ?? 'fixedInformation'} // default if you always use FixedInformation
+                    table={ts.table ?? 'fixedInformation'}
                     type={ts.type}
                     value={typeof v === 'string' ? v : ''}
-                    onChange={(code) => setFilters(prev => ({ ...prev, [k]: code }))}
+                    onChange={(code) =>
+                      setFilters((prev) => ({ ...prev, [k]: code }))
+                    }
                   />
                 );
               }
 
-              // --- date / datetime: range pickers (your JDate/JDateTime components if used) ---
               if (t === 'date') {
                 return (
                   <div key={k} className="space-y-1 overflow-visible">
-                    {/* <div className="text-xs text-gray-600">{label}</div> */}
                     <JDateRangeFilter
                       label={label}
                       value={v || {}}
-                      onChange={(nv) => setFilters(prev => ({ ...prev, [k]: nv }))}
+                      onChange={(nv) =>
+                        setFilters((prev) => ({ ...prev, [k]: nv }))
+                      }
                     />
                   </div>
                 );
@@ -387,39 +527,47 @@ return (
               if (t === 'datetime') {
                 return (
                   <div key={k} className="space-y-1 overflow-visible">
-                    {/* <div className="text-xs text-gray-600">{label}</div> */}
                     <JDateTimeRangeFilter
                       label={label}
                       value={v || {}}
-                      onChange={(nv) => setFilters(prev => ({ ...prev, [k]: nv }))}
+                      onChange={(nv) =>
+                        setFilters((prev) => ({ ...prev, [k]: nv }))
+                      }
                     />
                   </div>
                 );
               }
 
               if (t === 'select' || t === 'multiselect') {
-                const opts: Array<{ value: string; label: string }> = Array.isArray(cfg.options) ? cfg.options : [];
+                const opts: Array<{ value: string; label: string }> = Array.isArray(
+                  cfg.options
+                )
+                  ? cfg.options
+                  : [];
                 return (
                   <div key={k} className="space-y-1">
                     <label className="text-xs text-gray-600 block">{label}</label>
-
-                    {/* single-select filter; feel free to switch to multiple if you want */}
+                    {/* single-select filter; feel free to switch to multiple */}
                     <select
                       className="w-full border rounded-md px-2 py-1"
                       dir="rtl"
                       value={v ?? ''}
                       onChange={(e) => {
                         const val = e.target.value;
-                        setFilters(prev => {
+                        setFilters((prev) => {
                           const next = { ...prev };
-                          if (!val) delete next[k]; else next[k] = val;
+                          if (!val) delete next[k];
+                          else next[k] = val;
                           return next;
                         });
                       }}
                     >
                       <option value="">همه</option>
                       {opts.map((o, i) => (
-                        <option key={`${k}-${i}-${String(o.value)}`} value={String(o.value)}>
+                        <option
+                          key={`${k}-${i}-${String(o.value)}`}
+                          value={String(o.value)}
+                        >
                           {String(o.label ?? o.value)}
                         </option>
                       ))}
@@ -427,7 +575,8 @@ return (
                   </div>
                 );
               }
-              // --- default text filter ---
+
+              // default text filter
               return (
                 <div key={k} className="space-y-1">
                   <label className="text-xs text-gray-600 block">{label}</label>
@@ -435,7 +584,9 @@ return (
                     className="w-full border rounded-md px-2 py-1"
                     dir="rtl"
                     value={v || ''}
-                    onChange={e => setFilters(prev => ({ ...prev, [k]: e.target.value }))}
+                    onChange={(e) =>
+                      setFilters((prev) => ({ ...prev, [k]: e.target.value }))
+                    }
                     placeholder={`جستجو در ${label}…`}
                   />
                 </div>
@@ -444,16 +595,15 @@ return (
           </div>
         ) : null}
 
-
         {/* Ordering */}
         <div className="flex flex-wrap items-center gap-3" dir="rtl">
           <div className="text-xs text-gray-600">مرتب‌سازی:</div>
           <select
             className="border rounded-md px-2 py-1"
             value={orderKey}
-            onChange={e => setOrderKey(e.target.value)}
+            onChange={(e) => setOrderKey(e.target.value)}
           >
-            {(meta?.orderableKeys ?? ['createdAt']).map(k => (
+            {(meta?.orderableKeys ?? ['createdAt']).map((k) => (
               <option key={k} value={k}>
                 {labels[k] || (k === 'createdAt' ? 'تاریخ ایجاد' : k)}
               </option>
@@ -462,7 +612,7 @@ return (
           <select
             className="border rounded-md px-2 py-1"
             value={orderDir}
-            onChange={e => setOrderDir(e.target.value as 'asc' | 'desc')}
+            onChange={(e) => setOrderDir(e.target.value as 'asc' | 'desc')}
           >
             <option value="asc">صعودی</option>
             <option value="desc">نزولی</option>
@@ -487,7 +637,6 @@ return (
               {exporting ? 'در حال ساخت اکسل…' : 'خروجی اکسل'}
             </button>
           </div>
-
         </div>
       </div>
 
@@ -504,8 +653,11 @@ return (
                 </th>
               ))}
               <th className="p-2 text-right whitespace-nowrap">وضعیت</th>
+              {/* actions on the left */}
+              <th className="p-2 text-left whitespace-nowrap w-24">اقدامات</th>
             </tr>
           </thead>
+
           <tbody>
             {rows.map((r, i) => (
               <tr key={r.id} className="border-t">
@@ -515,18 +667,49 @@ return (
                 <td className="p-2 whitespace-nowrap ltr">
                   {formatJalali(r.createdAt, true)}
                 </td>
+
                 {visible.map((k) => (
                   <td key={k} className="px-3 py-2">
                     {renderCell(k, r.payload?.[k])}
                   </td>
                 ))}
+
                 <td className="p-2 whitespace-nowrap">{statusFa(r.status)}</td>
+
+                {/* small edit/delete buttons (only for eligible rows) */}
+                <td className="p-2 whitespace-nowrap text-left">
+                  {canMutateRow(r, canSendClient) ? (
+                    <div className="inline-flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="rounded border px-2 py-1 text-xs hover:bg-gray-50"
+                        onClick={() => openEdit(r)}
+                        title="ویرایش"
+                      >
+                        ✎
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded border px-2 py-1 text-xs text-red-600 border-red-300 hover:bg-red-50"
+                        onClick={() => handleDelete(r.id)}
+                        title="حذف"
+                      >
+                        🗑
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="text-xs text-gray-400">—</span>
+                  )}
+                </td>
               </tr>
             ))}
 
             {(!rows || rows.length === 0) && (
               <tr>
-                <td className="p-4 text-center text-gray-500" colSpan={(visible?.length ?? 0) + 3}>
+                <td
+                  className="p-4 text-center text-gray-500"
+                  colSpan={(visible?.length ?? 0) + 4}
+                >
                   {loading ? 'در حال بارگذاری…' : 'داده‌ای یافت نشد'}
                 </td>
               </tr>
@@ -534,15 +717,22 @@ return (
           </tbody>
         </table>
       </div>
+
+      {/* Entry details modal */}
       <Modal open={entryModal.open} onClose={() => setEntryModal({ open: false })}>
-        {entryModal.loading && <div className="text-sm text-gray-600">در حال بارگذاری…</div>}
-        {entryModal.error && <div className="text-sm text-red-600">{entryModal.error}</div>}
+        {entryModal.loading && (
+          <div className="text-sm text-gray-600">در حال بارگذاری…</div>
+        )}
+        {entryModal.error && (
+          <div className="text-sm text-red-600">{entryModal.error}</div>
+        )}
 
         {entryModal.data && (
           <div dir="rtl" className="space-y-3">
             <div className="font-bold text-base">{entryModal.data.formTitle}</div>
             <div className="text-xs text-gray-500 ltr">
-              {formatJalali(entryModal.data.createdAt, true)} • {statusFa(entryModal.data.status)}
+              {formatJalali(entryModal.data.createdAt, true)} •{' '}
+              {statusFa(entryModal.data.status)}
             </div>
 
             <div className="divide-y">
@@ -564,134 +754,332 @@ return (
             </div>
           </div>
         )}
-    </Modal>
-  </div>
-  );
+      </Modal>
 
-function statusFa(s: string) {
-  switch (s) {
-    case 'submitted':
-      return 'ارسال شده';
-    case 'firstConfirmed':
-      return 'تأیید نخست';
-    case 'finalConfirmed':
-      return 'تأیید نهایی';
-    default:
-      return s;
-  }
-}
+      {/* Edit modal */}
+      <Modal open={editModal.open} onClose={() => setEditModal({ open: false })}>
+        <div dir="rtl" className="space-y-3">
+          <div className="font-bold text-base">ویرایش آیتم</div>
+          {editModal.error && (
+            <div className="text-sm text-red-600">{editModal.error}</div>
+          )}
 
-function TableSelectFilter({
-  label,
-  table,
-  type,
-  value,
-  onChange,
-}: {
-  label: string;
-  table: string;
-  type: string;
-  value?: string;
-  onChange: (v: string) => void;
-}) {
-  const [opts, setOpts] = useState<{code:string; title:string}[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string|null>(null);
+          <form
+            className="space-y-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!editModal.saving) saveEdit();
+            }}
+          >
+            {schemaArr.map((f) => {
+              const k = f.key;
+              const t = f.type;
+              const v = editModal.payload?.[k];
 
-  useEffect(() => {
-  let cancel = false;
-  (async () => {
-    setLoading(true); setErr(null);
-    try {
-      const url = `/api/table-select?table=${encodeURIComponent(table)}&type=${encodeURIComponent(type)}&limit=200`;
-      const r = await fetch(url, { cache: 'no-store' });
-      const j = await r.json();
+              // read-only for complex types (expand later if needed)
+              const readOnly = ['entryRef', 'entryRefMulti', 'file', 'group', 'kardexItem'].includes(
+                t
+              );
 
-      // Accept either: { items: [{code,title}] } OR { options: [{value,label}] }
-      const raw = Array.isArray(j?.items) ? j.items
-               : Array.isArray(j?.options) ? j.options
-               : [];
+              // select/multiselect options (from config)
+              const selectOpts: Array<{ value: string; label: string }> = Array.isArray(
+                f.config?.options
+              )
+                ? f.config.options
+                : [];
 
-      const normalized: { code: string; title: string }[] =
-      (j.options ?? [])
-        .map((it: any) => ({
-          code:  it.code  ?? it.value ?? '',
-          title: it.title ?? it.label ?? '',
-        }))
-        .filter((x: { code: string; title: string }) => !!x.code && !!x.title);
+              return (
+                <div key={k} className="grid grid-cols-3 gap-2 items-center">
+                  <label className="text-sm text-gray-700">{labels[k] || k}</label>
+                  <div className="col-span-2">
+                    {readOnly ? (
+                      <div className="text-sm text-gray-500">
+                        (این نوع در ویرایش سریع پشتیبانی نمی‌شود)
+                      </div>
+                    ) : t === 'textarea' ? (
+                      <textarea
+                        className="w-full border rounded-md px-3 py-2"
+                        value={v ?? ''}
+                        onChange={(e) =>
+                          setEditModal((m) => ({
+                            ...m,
+                            payload: { ...(m.payload ?? {}), [k]: e.target.value },
+                          }))
+                        }
+                      />
+                    ) : t === 'number' ? (
+                      <input
+                        type="number"
+                        className="w-full border rounded-md px-3 py-2"
+                        dir="ltr"
+                        value={v ?? ''}
+                        onChange={(e) =>
+                          setEditModal((m) => ({
+                            ...m,
+                            payload: {
+                              ...(m.payload ?? {}),
+                              [k]: e.target.value === '' ? null : Number(e.target.value),
+                            },
+                          }))
+                        }
+                      />
+                    ) : t === 'date' ? (
+                      <input
+                        type="date"
+                        className="w-full border rounded-md px-3 py-2"
+                        dir="ltr"
+                        value={v ? new Date(v).toISOString().slice(0, 10) : ''}
+                        onChange={(e) =>
+                          setEditModal((m) => ({
+                            ...m,
+                            payload: { ...(m.payload ?? {}), [k]: e.target.value || null },
+                          }))
+                        }
+                      />
+                    ) : t === 'datetime' ? (
+                      <input
+                        type="datetime-local"
+                        className="w-full border rounded-md px-3 py-2"
+                        dir="ltr"
+                        value={v ? new Date(v).toISOString().slice(0, 16) : ''}
+                        onChange={(e) =>
+                          setEditModal((m) => ({
+                            ...m,
+                            payload: { ...(m.payload ?? {}), [k]: e.target.value || null },
+                          }))
+                        }
+                      />
+                    ) : t === 'select' ? (
+                      <select
+                        className="w-full border rounded-md px-3 py-2"
+                        value={v ?? ''}
+                        onChange={(e) =>
+                          setEditModal((m) => ({
+                            ...m,
+                            payload: { ...(m.payload ?? {}), [k]: e.target.value || '' },
+                          }))
+                        }
+                      >
+                        <option value="">— انتخاب کنید —</option>
+                        {selectOpts.map((o, i) => (
+                          <option
+                            key={`${k}-${i}-${String(o.value)}`}
+                            value={String(o.value)}
+                          >
+                            {String(o.label ?? o.value)}
+                          </option>
+                        ))}
+                      </select>
+                    ) : t === 'multiselect' ? (
+                      <select
+                        multiple
+                        className="w-full border rounded-md px-3 py-2"
+                        value={Array.isArray(v) ? v.map(String) : []}
+                        onChange={(e) => {
+                          const arr = Array.from(e.target.selectedOptions).map(
+                            (o) => o.value
+                          );
+                          setEditModal((m) => ({
+                            ...m,
+                            payload: { ...(m.payload ?? {}), [k]: arr },
+                          }));
+                        }}
+                      >
+                        {selectOpts.map((o, i) => (
+                          <option
+                            key={`${k}-${i}-${String(o.value)}`}
+                            value={String(o.value)}
+                          >
+                            {String(o.label ?? o.value)}
+                          </option>
+                        ))}
+                      </select>
+                    ) : t === 'checkbox' ? (
+                      <label className="inline-flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={!!v}
+                          onChange={(e) =>
+                            setEditModal((m) => ({
+                              ...m,
+                              payload: { ...(m.payload ?? {}), [k]: e.target.checked },
+                            }))
+                          }
+                        />
+                        <span className="text-sm">فعال</span>
+                      </label>
+                    ) : (
+                      <input
+                        className="w-full border rounded-md px-3 py-2"
+                        value={v ?? ''}
+                        onChange={(e) =>
+                          setEditModal((m) => ({
+                            ...m,
+                            payload: { ...(m.payload ?? {}), [k]: e.target.value },
+                          }))
+                        }
+                      />
+                    )}
+                  </div>
+                </div>
+              );
+            })}
 
-
-      if (!cancel) setOpts(normalized);
-    } catch (e:any) {
-      if (!cancel) setErr(e?.message || 'خطا در بارگذاری گزینه‌ها');
-    } finally {
-      if (!cancel) setLoading(false);
-    }
-  })();
-  return () => { cancel = true; };
-}, [table, type]);
-
-
-  return (
-    <div className="space-y-1">
-      <label className="text-xs text-gray-600 block">{label}</label>
-      <select
-        className="w-full border rounded-md px-2 py-1"
-        value={value ?? ''}
-        onChange={e => onChange(e.target.value)}
-      >
-        <option value="">{loading ? 'در حال بارگذاری…' : '— انتخاب کنید —'}</option>
-        {opts.map(o => (
-          <option key={o.code} value={o.code}>{o.title}</option>
-        ))}
-      </select>
-      {err && <div className="text-xs text-red-600">{err}</div>}
+            <div className="pt-2 flex items-center gap-2">
+              <button
+                type="submit"
+                disabled={editModal.saving}
+                className="rounded-md bg-blue-600 text-white px-4 py-2 disabled:opacity-50"
+              >
+                {editModal.saving ? 'در حال ذخیره…' : 'ذخیره تغییرات'}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border px-3 py-2"
+                onClick={() => setEditModal({ open: false })}
+              >
+                انصراف
+              </button>
+            </div>
+          </form>
+        </div>
+      </Modal>
     </div>
   );
-}
-async function ensureEntryLabel(id: string) {
-  if (entryLabelCache[id]) return entryLabelCache[id];
-  try {
-    const r = await fetch(`/api/entries/${id}/summary`, { cache: 'no-store' });
-    const j = await r.json();
-    const label = j?.formTitle || 'مشاهده';
-    setEntryLabelCache(prev => ({ ...prev, [id]: label }));
-    return label;
-  } catch {
-    return 'مشاهده';
-  }
-}
 
-async function openEntryModal(id: string) {
-  setEntryModal({ open: true, id, loading: true, error: null });
-  try {
-    const r = await fetch(`/api/entries/${id}/summary`, { cache: 'no-store' });
-    const j = await r.json();
-    if (!r.ok || !j?.ok) throw new Error(j?.message || 'خطا');
-    setEntryModal({ open: true, id, loading: false, data: j, error: null });
-    // also cache label if not yet cached
-    if (j?.formTitle) {
-      setEntryLabelCache(prev => prev[id] ? prev : { ...prev, [id]: j.formTitle });
+  // ---- Inline helpers/components ----
+
+  function TableSelectFilter({
+    label,
+    table,
+    type,
+    value,
+    onChange,
+  }: {
+    label: string;
+    table: string;
+    type: string;
+    value?: string;
+    onChange: (v: string) => void;
+  }) {
+    const [opts, setOpts] = useState<{ code: string; title: string }[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [err, setErr] = useState<string | null>(null);
+
+    useEffect(() => {
+      let cancel = false;
+      (async () => {
+        setLoading(true);
+        setErr(null);
+        try {
+          const url = `/api/table-select?table=${encodeURIComponent(
+            table
+          )}&type=${encodeURIComponent(type)}&limit=200`;
+          const r = await fetch(url, { cache: 'no-store', credentials: 'include', });
+          const j = await r.json();
+
+          // Accept either: { items: [{code,title}] } OR { options: [{value,label}] }
+          const raw: any[] = Array.isArray(j?.items)
+            ? j.items
+            : Array.isArray(j?.options)
+            ? j.options
+            : [];
+
+          const normalized = raw
+            .map((it: any) => ({
+              code: it.code ?? it.value ?? '',
+              title: it.title ?? it.label ?? '',
+            }))
+            .filter((x: { code: string; title: string }) => !!x.code && !!x.title);
+
+          if (!cancel) setOpts(normalized);
+        } catch (e: any) {
+          if (!cancel) setErr(e?.message || 'خطا در بارگذاری گزینه‌ها');
+        } finally {
+          if (!cancel) setLoading(false);
+        }
+      })();
+      return () => {
+        cancel = true;
+      };
+    }, [table, type]);
+
+    return (
+      <div className="space-y-1">
+        <label className="text-xs text-gray-600 block">{label}</label>
+        <select
+          className="w-full border rounded-md px-2 py-1"
+          value={value ?? ''}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          <option value="">{loading ? 'در حال بارگذاری…' : '— انتخاب کنید —'}</option>
+          {opts.map((o) => (
+            <option key={o.code} value={o.code}>
+              {o.title}
+            </option>
+          ))}
+        </select>
+        {err && <div className="text-xs text-red-600">{err}</div>}
+      </div>
+    );
+  }
+
+  async function ensureEntryLabel(id: string) {
+    if (entryLabelCache[id]) return entryLabelCache[id];
+    try {
+      const r = await fetch(`/api/entries/${id}/summary`, { cache: 'no-store', credentials: 'include', });
+      const j = await r.json();
+      const label = j?.formTitle || 'مشاهده';
+      setEntryLabelCache((prev) => ({ ...prev, [id]: label }));
+      return label;
+    } catch {
+      return 'مشاهده';
     }
-  } catch (e: any) {
-    setEntryModal({ open: true, id, loading: false, error: e?.message || 'خطا' });
   }
-}
 
-function Modal({ open, onClose, children }: { open: boolean; onClose: () => void; children: React.ReactNode }) {
-  if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="absolute inset-0 flex items-center justify-center p-4">
-        <div className="w-full max-w-2xl rounded-xl bg-white shadow-lg border p-4 overflow-auto max-h-[80vh]">
-          <div className="text-left">
-            <button className="text-sm text-gray-500 hover:text-gray-700" onClick={onClose}>بستن</button>
+  async function openEntryModal(id: string) {
+    setEntryModal({ open: true, id, loading: true, error: null });
+    try {
+      const r = await fetch(`/api/entries/${id}/summary`, { cache: 'no-store', credentials: 'include', });
+      const j = await r.json();
+      if (!r.ok || !j?.ok) throw new Error(j?.message || 'خطا');
+      setEntryModal({ open: true, id, loading: false, data: j, error: null });
+      // also cache label if not yet cached
+      if (j?.formTitle) {
+        setEntryLabelCache((prev) => (prev[id] ? prev : { ...prev, [id]: j.formTitle }));
+      }
+    } catch (e: any) {
+      setEntryModal({ open: true, id, loading: false, error: e?.message || 'خطا' });
+    }
+  }
+
+  function Modal({
+    open,
+    onClose,
+    children,
+  }: {
+    open: boolean;
+    onClose: () => void;
+    children: React.ReactNode;
+  }) {
+    if (!open) return null;
+    return (
+      <div className="fixed inset-0 z-50">
+        <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+        <div className="absolute inset-0 flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl rounded-xl bg-white shadow-lg border p-4 overflow-auto max-h-[80vh]">
+            <div className="text-left">
+              <button
+                className="text-sm text-gray-500 hover:text-gray-700"
+                onClick={onClose}
+              >
+                بستن
+              </button>
+            </div>
+            <div className="mt-2">{children}</div>
           </div>
-          <div className="mt-2">{children}</div>
         </div>
       </div>
-    </div>
-  );
-}
+    );
+  }
 }

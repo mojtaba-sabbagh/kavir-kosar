@@ -138,14 +138,14 @@ export async function PUT(req: NextRequest,   { params }: { params: Promise<{ id
 }
 
 // ---------- DELETE /api/entries/[id] ----------
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest,  { params }: { params: Promise<{ id: string }> }) {
   try {
     const userId = await getOptionalUserId();
     if (!userId) {
       return NextResponse.json({ ok: false, message: 'نیاز به ورود' }, { status: 401 });
     }
 
-    const id = params.id;
+    const { id } = await params;
 
     const entry = await prisma.formEntry.findUnique({
       where: { id },

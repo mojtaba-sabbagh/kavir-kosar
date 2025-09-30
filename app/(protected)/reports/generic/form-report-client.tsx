@@ -1,10 +1,9 @@
-
-
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import JDateRangeFilter from '@/components/ui/JDateRangeFilter';
 import JDateTimeRangeFilter from '@/components/ui/JDateTimeRangeFilter';
+import EditEntryModal from '@/components/forms/EditEntryModal'; // Add this import
 
 // at the top with other imports
 import { useSearchParams } from 'next/navigation';
@@ -60,6 +59,13 @@ export default function FormReportClient({
   const [schema, setSchema] = useState<SchemaField[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  
+  // Edit modal state - REPLACE the old editModal state
+  const [editModal, setEditModal] = useState<{
+    open: boolean;
+    entry?: any;
+  }>({ open: false });
+
   // Derive from server meta (no extra state → no flicker/race)
   const canSendClient = useMemo(
     () => Boolean(canSend || meta?.canSubmit),
@@ -99,8 +105,7 @@ export default function FormReportClient({
 
   // Build querystring: depends on orderKey/orderDir/filters/schema/filterableKeys
   const qs = useMemo(() => {
-  const p = new URLSearchParams();
-
+    const p = new URLSearchParams();
 
     // order & paging
     p.set('order', orderKey || 'createdAt');
@@ -405,51 +410,55 @@ export default function FormReportClient({
     }
   }
 
-  // Edit modal state
-  const [editModal, setEditModal] = useState<{
-    open: boolean;
-    id?: string;
-    payload?: Record<string, any>;
-    saving?: boolean;
-    error?: string | null;
-  }>({ open: false, error: null });
-
-  // open editor only if eligible
+  // open editor only if eligible - UPDATED to use EditEntryModal
   function openEdit(row: Row) {
     if (!canSendClient) return;
     if (row.status !== 'submitted' && row.status !== 'draft') return;
+    
+    // Prepare entry data for EditEntryModal
+    const entryData = {
+      id: row.id,
+      createdAt: row.createdAt,
+      status: row.status,
+      data: row.payload ?? {},
+      form: {
+        code: meta?.formCode || code,
+        titleFa: meta?.titleFa || 'فرم'
+      }
+    };
+    
     setEditModal({
       open: true,
-      id: row.id,
-      payload: { ...(row.payload ?? {}) },
-      saving: false,
-      error: null,
+      entry: entryData
     });
   }
 
-  async function saveEdit() {
-    if (!editModal.id) return;
-    setEditModal((m) => ({ ...m, saving: true, error: null }));
+  // Handle save from EditEntryModal - NEW FUNCTION
+  async function handleSave(updatedData: Record<string, any>) {
+    if (!editModal.entry?.id) return;
+    
     try {
-      const r = await fetch(`/api/entries/${editModal.id}`, {
+      const r = await fetch(`/api/entries/${editModal.entry.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ payload: editModal.payload }),
+        body: JSON.stringify({ payload: updatedData }),
         credentials: 'include',
       });
+      
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
         throw new Error(j?.message || 'خطا در ذخیره تغییرات');
       }
-      setEditModal({ open: false, error: null });
+      
+      setEditModal({ open: false });
       refresh(); // reload table
     } catch (e: any) {
-      setEditModal((m) => ({ ...m, saving: false, error: e?.message || 'خطا' }));
+      throw new Error(e?.message || 'خطا در ذخیره تغییرات');
     }
   }
 
   async function handleDelete(id: string) {
-  if (!canSendClient) return;
+    if (!canSendClient) return;
     const ok = confirm('آیا از حذف این آیتم مطمئن هستید؟ این عمل غیرقابل بازگشت است.');
     if (!ok) return;
     try {
@@ -473,7 +482,6 @@ export default function FormReportClient({
           <div>statuses: {[...new Set(rows.map(r => r.status))].join(', ') || '(none)'}</div>
         </div>
       )}
-
 
       {err && <div className="text-red-600 text-sm">{err}</div>}
 
@@ -756,194 +764,24 @@ export default function FormReportClient({
         )}
       </Modal>
 
-      {/* Edit modal */}
-      <Modal open={editModal.open} onClose={() => setEditModal({ open: false })}>
-        <div dir="rtl" className="space-y-3">
-          <div className="font-bold text-base">ویرایش آیتم</div>
-          {editModal.error && (
-            <div className="text-sm text-red-600">{editModal.error}</div>
-          )}
+      {/* Edit modal - REPLACED with EditEntryModal */}
+      {editModal.open && editModal.entry && (
+        <EditEntryModal
+          entry={editModal.entry}
+          fields={schemaArr.map(field => ({
+            key: field.key,
+            labelFa: labels[field.key] || field.key,
+            type: field.type,
+            required: false, // You might want to adjust this based on your schema
+            config: field.config || {},
+            order: 0 // You might want to adjust this based on your schema
+          }))}
+          isOpen={editModal.open}
+          onClose={() => setEditModal({ open: false })}
+          onSave={handleSave}
+        />
+      )}
 
-          <form
-            className="space-y-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!editModal.saving) saveEdit();
-            }}
-          >
-            {schemaArr.map((f) => {
-              const k = f.key;
-              const t = f.type;
-              const v = editModal.payload?.[k];
-
-              // read-only for complex types (expand later if needed)
-              const readOnly = ['entryRef', 'entryRefMulti', 'file', 'group', 'kardexItem'].includes(
-                t
-              );
-
-              // select/multiselect options (from config)
-              const selectOpts: Array<{ value: string; label: string }> = Array.isArray(
-                f.config?.options
-              )
-                ? f.config.options
-                : [];
-
-              return (
-                <div key={k} className="grid grid-cols-3 gap-2 items-center">
-                  <label className="text-sm text-gray-700">{labels[k] || k}</label>
-                  <div className="col-span-2">
-                    {readOnly ? (
-                      <div className="text-sm text-gray-500">
-                        (این نوع در ویرایش سریع پشتیبانی نمی‌شود)
-                      </div>
-                    ) : t === 'textarea' ? (
-                      <textarea
-                        className="w-full border rounded-md px-3 py-2"
-                        value={v ?? ''}
-                        onChange={(e) =>
-                          setEditModal((m) => ({
-                            ...m,
-                            payload: { ...(m.payload ?? {}), [k]: e.target.value },
-                          }))
-                        }
-                      />
-                    ) : t === 'number' ? (
-                      <input
-                        type="number"
-                        className="w-full border rounded-md px-3 py-2"
-                        dir="ltr"
-                        value={v ?? ''}
-                        onChange={(e) =>
-                          setEditModal((m) => ({
-                            ...m,
-                            payload: {
-                              ...(m.payload ?? {}),
-                              [k]: e.target.value === '' ? null : Number(e.target.value),
-                            },
-                          }))
-                        }
-                      />
-                    ) : t === 'date' ? (
-                      <input
-                        type="date"
-                        className="w-full border rounded-md px-3 py-2"
-                        dir="ltr"
-                        value={v ? new Date(v).toISOString().slice(0, 10) : ''}
-                        onChange={(e) =>
-                          setEditModal((m) => ({
-                            ...m,
-                            payload: { ...(m.payload ?? {}), [k]: e.target.value || null },
-                          }))
-                        }
-                      />
-                    ) : t === 'datetime' ? (
-                      <input
-                        type="datetime-local"
-                        className="w-full border rounded-md px-3 py-2"
-                        dir="ltr"
-                        value={v ? new Date(v).toISOString().slice(0, 16) : ''}
-                        onChange={(e) =>
-                          setEditModal((m) => ({
-                            ...m,
-                            payload: { ...(m.payload ?? {}), [k]: e.target.value || null },
-                          }))
-                        }
-                      />
-                    ) : t === 'select' ? (
-                      <select
-                        className="w-full border rounded-md px-3 py-2"
-                        value={v ?? ''}
-                        onChange={(e) =>
-                          setEditModal((m) => ({
-                            ...m,
-                            payload: { ...(m.payload ?? {}), [k]: e.target.value || '' },
-                          }))
-                        }
-                      >
-                        <option value="">— انتخاب کنید —</option>
-                        {selectOpts.map((o, i) => (
-                          <option
-                            key={`${k}-${i}-${String(o.value)}`}
-                            value={String(o.value)}
-                          >
-                            {String(o.label ?? o.value)}
-                          </option>
-                        ))}
-                      </select>
-                    ) : t === 'multiselect' ? (
-                      <select
-                        multiple
-                        className="w-full border rounded-md px-3 py-2"
-                        value={Array.isArray(v) ? v.map(String) : []}
-                        onChange={(e) => {
-                          const arr = Array.from(e.target.selectedOptions).map(
-                            (o) => o.value
-                          );
-                          setEditModal((m) => ({
-                            ...m,
-                            payload: { ...(m.payload ?? {}), [k]: arr },
-                          }));
-                        }}
-                      >
-                        {selectOpts.map((o, i) => (
-                          <option
-                            key={`${k}-${i}-${String(o.value)}`}
-                            value={String(o.value)}
-                          >
-                            {String(o.label ?? o.value)}
-                          </option>
-                        ))}
-                      </select>
-                    ) : t === 'checkbox' ? (
-                      <label className="inline-flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={!!v}
-                          onChange={(e) =>
-                            setEditModal((m) => ({
-                              ...m,
-                              payload: { ...(m.payload ?? {}), [k]: e.target.checked },
-                            }))
-                          }
-                        />
-                        <span className="text-sm">فعال</span>
-                      </label>
-                    ) : (
-                      <input
-                        className="w-full border rounded-md px-3 py-2"
-                        value={v ?? ''}
-                        onChange={(e) =>
-                          setEditModal((m) => ({
-                            ...m,
-                            payload: { ...(m.payload ?? {}), [k]: e.target.value },
-                          }))
-                        }
-                      />
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-
-            <div className="pt-2 flex items-center gap-2">
-              <button
-                type="submit"
-                disabled={editModal.saving}
-                className="rounded-md bg-blue-600 text-white px-4 py-2 disabled:opacity-50"
-              >
-                {editModal.saving ? 'در حال ذخیره…' : 'ذخیره تغییرات'}
-              </button>
-              <button
-                type="button"
-                className="rounded-md border px-3 py-2"
-                onClick={() => setEditModal({ open: false })}
-              >
-                انصراف
-              </button>
-            </div>
-          </form>
-        </div>
-      </Modal>
     </div>
   );
 

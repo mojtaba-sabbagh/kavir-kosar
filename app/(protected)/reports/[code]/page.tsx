@@ -42,8 +42,10 @@ async function getCanSendForForm(formId: string): Promise<boolean> {
       formId,
       canSubmit: true, // ← maps to "canSend"
       role: {
-        userRoles: {
-          some: { userId },
+        is: {                    // <— important: disambiguates RoleWhereInput vs RoleScalarRelationFilter
+          users: {               // <— use the actual relation field name on Role (likely "users")
+            some: { userId },
+          },
         },
       },
     },

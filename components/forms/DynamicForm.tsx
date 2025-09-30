@@ -9,6 +9,7 @@ import KardexPicker from './KardexPicker';
 import JDatePicker from '@/components/ui/JDatePicker';
 import JDateTimePicker from '@/components/ui/JDateTimePicker';
 import TableSelectInput from './inputs/TableSelectInput';
+import Link from 'next/link';
 
 type Props = {
   form: Pick<Form, 'code'|'titleFa'>;
@@ -58,7 +59,18 @@ export default function DynamicForm({ form, fields }: Props) {
 
   return (
     <div className="mx-auto max-w-xl">
-      <h2 className="text-xl font-bold mb-4">{form.titleFa}</h2>
+        <div className="flex justify-between items-center bg-white p-4 rounded-lg shadow-sm mb-4">
+          <h2 className="text-xl font-bold mb-4">{form.titleFa}</h2>
+          <Link
+            href="/"
+            className="inline-flex items-center gap-2 rounded-md border px-3 py-1 text-sm hover:bg-purple-50"
+            title="بازگشت به خانه"
+            prefetch
+          >
+            <span aria-hidden>←</span>
+            <span>بازگشت</span>
+          </Link>
+        </div>
 
       <form onSubmit={onSubmit} className="rounded-2xl bg-white p-4 border space-y-4">
         {sorted.map(f => {

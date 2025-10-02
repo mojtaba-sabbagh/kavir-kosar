@@ -166,6 +166,19 @@ const kardexReport = await prisma.report.upsert({
     },
   });
 
+  const dailyProductionReport = await prisma.report.upsert({
+    where: { code: 'daily-report' },
+    update: { 
+      titleFa: 'گزارش تولید روزانه',
+      url: '/reports/daily-production'  // Added URL update here
+    },
+    create: { 
+      code: 'daily-report', 
+      titleFa: 'گزارش تولید روزانه',
+      url: '/reports/daily-production'  // Added URL for create as well
+    },
+  });
+
 
 await prisma.roleReportPermission.upsert({
   where: { roleId_reportId: { roleId: adminRole.id, reportId: kardexReport.id } },

@@ -420,7 +420,7 @@ export default function EditEntryModal({ entry, fields, isOpen, onClose, onSave 
           />
         )}
 
-        {f.type === 'group' && (
+        {String(f.type) === 'group' && (
           <GroupField
             fieldKey={f.key}
             label={f.labelFa}

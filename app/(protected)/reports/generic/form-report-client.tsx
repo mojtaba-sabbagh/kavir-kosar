@@ -1,12 +1,40 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState} from 'react'
+import { useRouter } from 'next/navigation';
 import JDateRangeFilter from '@/components/ui/JDateRangeFilter';
 import JDateTimeRangeFilter from '@/components/ui/JDateTimeRangeFilter';
 import EditEntryModal from '@/components/forms/EditEntryModal'; // Add this import
-
-// at the top with other imports
 import { useSearchParams } from 'next/navigation';
+import type { FieldType } from '@prisma/client';
+import { FieldType as FieldTypeEnum } from '@prisma/client';
+
+// normalize string → Prisma FieldType (fallback: 'text')
+const toFieldType = (v: unknown): FieldType => {
+  const s = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  const allowed = new Set(Object.values(FieldTypeEnum) as string[]);
+  return allowed.has(s) ? (s as FieldType) : FieldTypeEnum.text;
+};
+
+const router = useRouter();
+
+// robust getters so TS doesn't complain about missing props
+const getRequired = (f: any): boolean =>
+  typeof f?.required === 'boolean'
+    ? f.required
+    : typeof f?.isRequired === 'boolean'
+    ? f.isRequired
+    : typeof f?.config?.required === 'boolean'
+    ? f.config.required
+    : typeof f?.rules?.required === 'boolean'
+    ? f.rules.required
+    : false;
+
+const getOrder = (f: any, i: number): number => {
+  const o = f?.order ?? f?.sortOrder;
+  return Number.isFinite(o) ? Number(o) : i;
+};
+
 // ---- Types ----
 type Meta = {
   formCode: string;
@@ -764,24 +792,37 @@ export default function FormReportClient({
         )}
       </Modal>
 
-      {/* Edit modal - REPLACED with EditEntryModal */}
-      {editModal.open && editModal.entry && (
-        <EditEntryModal
-          entry={editModal.entry}
-          fields={schemaArr.map(field => ({
-            key: field.key,
-            labelFa: labels[field.key] || field.key,
-            type: field.type,
-            required: false, // You might want to adjust this based on your schema
-            config: field.config || {},
-            order: 0 // You might want to adjust this based on your schema
-          }))}
-          isOpen={editModal.open}
-          onClose={() => setEditModal({ open: false })}
-          onSave={handleSave}
-        />
-      )}
-
+     {editModal.open && editModal.entry && (
+      <EditEntryModal
+        entry={editModal.entry}
+        fields={schemaArr.map((field: any, i: number) => ({
+          key: String(field.key),
+          labelFa: labels[field.key] || String(field.key),
+          type: toFieldType(field.type),
+          required: getRequired(field),          // ✅ no TS error
+          config: field?.config ?? null,
+          order: getOrder(field, i),            // ✅ safe fallback
+        }))}
+        isOpen={true}
+        onClose={() => setEditModal({ open: false, entry: null })}
+        onSave={async (updatedData) => {
+          const id = editModal.entry!.id;
+          try {
+            const res = await fetch(`/api/form-entries/${id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(updatedData),
+            });
+            if (!res.ok) throw new Error(await res.text());
+            router.refresh();
+            setEditModal({ open: false, entry: null });
+          } catch (err) {
+            console.error(err);
+            alert('به‌روزرسانی ناموفق بود.');
+          }
+        }}
+      />
+    )}
     </div>
   );
 

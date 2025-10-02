@@ -150,7 +150,7 @@ export async function GET(
     const debugBag = DEBUG
       ? {
           userId: userId ?? null,
-          cookieNames: cookies().getAll().map((c) => c.name),
+          cookieNames: (await cookies()).getAll().map((c) => c.name),
         }
       : undefined;
 

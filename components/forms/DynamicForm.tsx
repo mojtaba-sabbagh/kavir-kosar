@@ -16,6 +16,30 @@ type Props = {
   fields: Pick<FormField, 'key'|'labelFa'|'type'|'required'|'config'|'order'>[];
 };
 
+const ARABIC_INDIC = '٠١٢٣٤٥٦٧٨٩';
+const PERSIAN = '۰۱۲۳۴۵۶۷۸۹';
+
+function toEnglishDigits(s: string): string {
+  if (!s) return s;
+  // unify thousands/decimal separators
+  // Arabic thousands: U+066C '٬' ; Arabic decimal: U+066B '٫' ; Arabic comma: U+060C '،'
+  let t = s.replace(/\u066C|,/g, '')            // remove thousands separators
+           .replace(/\u066B|\u060C/g, '.');     // convert Arabic decimal/comma to dot
+
+  // convert Persian & Arabic-Indic digits to ASCII
+  t = t.replace(/[۰-۹]/g, d => String(PERSIAN.indexOf(d)))
+       .replace(/[٠-٩]/g, d => String(ARABIC_INDIC.indexOf(d)));
+
+  // trim spaces
+  return t.trim();
+}
+
+function isNumericLike(s: string): boolean {
+  const en = toEnglishDigits(s);
+  return /^-?\d+(\.\d+)?$/.test(en);
+}
+
+
 export default function DynamicForm({ form, fields }: Props) {
   const sorted = [...fields].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   const [values, setValues] = useState<Record<string, any>>({});
@@ -33,15 +57,34 @@ export default function DynamicForm({ form, fields }: Props) {
     const json = await res.json();
     return json.storageKey as string; // e.g., /uploads/123.png
   }
+  const coerceValues = (
+    fields: Pick<FormField, 'key'|'type'|'config'>[],
+    vals: Record<string, any>
+  ) => {
+    const out: Record<string, any> = { ...vals };
 
+    for (const f of fields) {
+      if (f.type === 'number') {
+        const raw = out[f.key];
+        if (raw === '' || raw == null) { out[f.key] = null; continue; }
+        const en = toEnglishDigits(String(raw));
+        const n = (f.config as any)?.decimals ? parseFloat(en) : parseInt(en, 10);
+        out[f.key] = Number.isFinite(n) ? n : null;
+      }
+      // If you later support group/repeatable with nested number fields,
+      // recurse into their children here.
+    }
+    return out;
+  };
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true); setMsg(null); setErr(null);
     try {
+      const payload = coerceValues(sorted, values);
       const res = await fetch(`/api/forms/submit?code=${encodeURIComponent(form.code)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(values),
+        body: JSON.stringify(payload),
       });
       if (res.ok) {
         setMsg('ثبت شد');
@@ -105,16 +148,22 @@ export default function DynamicForm({ form, fields }: Props) {
 
               {f.type === 'number' && (
                 <input
-                  type="number"
-                  inputMode="decimal"
-                  step={cfg.step ?? (cfg.decimals ? '0.01' : '1')}
-                  min={cfg.min ?? undefined}
-                  max={cfg.max ?? undefined}
+                  type="text"                  // <— important: not "number"
+                  inputMode="decimal"          // mobile numeric keypad
                   className={common}
-                  dir="ltr"
+                  dir="ltr"                    // keep left-to-right for readability
                   value={values[f.key] ?? ''}
-                  onChange={e => set(f.key, e.target.value)}
+                  onChange={(e) => {
+                    // allow digits (ASCII, Persian, Arabic-Indic), decimal separators, minus sign
+                    const raw = e.target.value;
+                    const cleaned = raw.replace(/[^\d۰-۹٠-٩\.\u066B\u060C\u066C-]/g, '');
+                    set(f.key, cleaned);
+                  }}
                   placeholder={cfg.placeholder ?? ''}
+                  pattern={cfg.decimals
+                    ? "[0-9٠-٩۰-۹]+([\\.\\u066B\\u060C][0-9٠-٩۰-۹]+)?"
+                    : "[0-9٠-٩۰-۹]+"}
+                  title="فقط عدد وارد کنید (ارقام فارسی هم مجاز است)"
                 />
               )}
 

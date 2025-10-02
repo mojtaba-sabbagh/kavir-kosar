@@ -1,3 +1,5 @@
+// KardexPicker.tsx (patched)
+
 'use client';
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -10,7 +12,7 @@ export default function KardexPicker({
   value,
   onSelect,
   endpoint = '/api/kardex/search',
-  minChars = 0,              // 0 => allow empty query to fetch defaults
+  minChars = 0,
   debounceMs = 250,
 }: {
   label: string;
@@ -44,6 +46,18 @@ export default function KardexPicker({
       window.removeEventListener('scroll', onWin, true);
     };
   }, []);
+
+  // 🔧 NEW: sync with parent reset — when value is cleared, flush internal state
+  useEffect(() => {
+    if (!value) {
+      setQ('');
+      setItems([]);
+      setOpen(false);
+      setErr(null);
+    }
+    // If you want to reflect a non-empty value into the input, you could also setQ here.
+    // else { setQ(''); } // prefer leaving search empty and show the helper line below.
+  }, [value]);
 
   // Close when clicking outside
   useEffect(() => {
@@ -83,7 +97,7 @@ export default function KardexPicker({
       setItems(next);
       setOpen(next.length > 0);
     } catch (e) {
-      if ((e as any)?.name === 'AbortError') return; // new request started
+      if ((e as any)?.name === 'AbortError') return;
       setErr('خطا در جستجو');
       setItems([]);
       setOpen(false);
@@ -95,7 +109,6 @@ export default function KardexPicker({
   // Fetch when typing (including empty if allowed by minChars=0)
   useEffect(() => {
     const need = dq.trim().length >= minChars;
-    // If minChars > 0 and dq is too short, clear results
     if (!need) {
       setItems([]);
       setOpen(false);
@@ -110,17 +123,13 @@ export default function KardexPicker({
   // Fetch on focus (so it shows a default list even before typing)
   const handleFocus = () => {
     updateRect();
-    // If we already have items from a recent fetch, just open
     if (items.length > 0) {
       setOpen(true);
       return;
     }
-    // Trigger a fetch even if q is empty when minChars = 0
     if (minChars === 0) {
       const ctrl = new AbortController();
       fetchItems(ctrl.signal, '');
-      // we cannot return abort function from an event handler,
-      // but this will be very short-lived; acceptable here.
     }
   };
 
@@ -153,6 +162,7 @@ export default function KardexPicker({
 
       {loading && <div className="mt-1 text-xs text-gray-500">در حال جستجو…</div>}
       {err && <div className="mt-1 text-xs text-red-600">{err}</div>}
+      {/* When there is a selected code from parent but no current search text, show it as a hint */}
       {value && !q && <div className="mt-1 text-xs text-gray-500 font-mono ltr">{value}</div>}
 
       {open && items.length > 0 && rect && typeof window !== 'undefined' && createPortal(
@@ -160,7 +170,7 @@ export default function KardexPicker({
           role="listbox"
           style={{
             position: 'fixed',
-            top: rect.bottom + 4,           // fixed + viewport rect => no scrollY
+            top: rect.bottom + 4,
             left: rect.left,
             width: rect.width,
             maxHeight: '16rem',
@@ -180,6 +190,7 @@ export default function KardexPicker({
                 e.preventDefault();
                 cancelScheduledClose();
                 onSelect(it);
+                // Keep a human-readable label in the box
                 setQ(`${it.nameFa} — ${it.code}`);
                 setOpen(false);
               }}
@@ -195,3 +206,4 @@ export default function KardexPicker({
     </div>
   );
 }
+// End of KardexPicker.tsx

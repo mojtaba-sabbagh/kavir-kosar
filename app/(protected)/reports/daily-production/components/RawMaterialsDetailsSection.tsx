@@ -6,13 +6,13 @@ export const dynamic = "force-dynamic";
 type Props = { date: string };
 
 /* -------------------- helpers -------------------- */
-function faToEnDigits(s: string): string {
-  if (typeof s !== "string") return String(s ?? "");
+function faToEnDigits(s: any): string {
+  const str = String(s ?? "");
   const map: Record<string, string> = {
     "۰":"0","۱":"1","۲":"2","۳":"3","۴":"4","۵":"5","۶":"6","۷":"7","۸":"8","۹":"9",
     "٠":"0","١":"1","٢":"2","٣":"3","٤":"4","٥":"5","٦":"6","٧":"7","٨":"8","٩":"9",
   };
-  return s.replace(/[0-9۰-۹٠-٩]/g, (ch) => map[ch] ?? ch);
+  return str.replace(/[0-9۰-۹٠-٩]/g, (ch) => map[ch] ?? ch);
 }
 function cleanCode(input: any): string | undefined {
   if (input == null) return undefined;
@@ -47,6 +47,14 @@ function toJalali(isoDate: string, useLatinDigits = false): string {
     return isoDate;
   }
 }
+function normalizeIsoDateLike(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+  let s = faToEnDigits(input.trim()).replace(/[/.]/g, "-");
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s);
+  if (!m) return null;
+  const pad = (n: string) => n.padStart(2, "0");
+  return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
+}
 
 /* -------------------- group definitions -------------------- */
 const RAW_MATERIAL_GROUPS = [
@@ -73,11 +81,12 @@ function matchGroupByCode(code?: string): GroupKey | undefined {
 
 /* -------------------- types -------------------- */
 type TxnRow = {
-  id: string; // internal only (not shown)
-  time?: string | null;
-  unit?: string | null;
+  dateFa: string;                  // Jalali of payload.date
   shift?: 1 | 2 | 3;
-  code?: string;
+  unitCode?: string | null;        // payload.unit code
+  unitName?: string | null;        // from FixedInformation.title
+  code: string;                    // raw material code
+  nameFa?: string | null;          // from KardexItem.nameFa
   amount: number;
   description?: string | null;
 };
@@ -99,6 +108,10 @@ export default async function RawMaterialsDetailsSection({ date }: Props) {
   const groups = new Map<GroupKey, { labelFa: string; total: number; rows: TxnRow[] }>();
   for (const g of RAW_MATERIAL_GROUPS) groups.set(g.key, { labelFa: g.labelFa, total: 0, rows: [] });
 
+  // Collect lookups
+  const matCodes = new Set<string>();
+  const unitCodes = new Set<string>();
+
   // Fill buckets
   for (const e of entries) {
     const p = (e.payload as any) ?? {};
@@ -109,29 +122,61 @@ export default async function RawMaterialsDetailsSection({ date }: Props) {
     const key = matchGroupByCode(code);
     if (!key) continue;
 
+    const payloadDate = normalizeIsoDateLike(p?.date) || date; // fallback to requested date
     const row: TxnRow = {
-      id: e.id,
-      time: e.finalConfirmedAt?.toISOString() ?? e.createdAt?.toISOString(),
-      unit: p?.unit ?? null,
+      dateFa: toJalali(payloadDate),
       shift: parseShift(p?.shift ?? p?.workShift ?? p?.shiftNo),
+      unitCode: p?.unit ?? null,
+      unitName: null, // to be filled after lookup
       code,
+      nameFa: null,   // to be filled after lookup
       amount,
       description: p?.description ?? null,
     };
+
+    matCodes.add(code);
+    if (row.unitCode) unitCodes.add(String(row.unitCode));
 
     const bucket = groups.get(key)!;
     bucket.rows.push(row);
     bucket.total += amount;
   }
 
+  // Look up raw material names in KardexItem
+  if (matCodes.size) {
+    const items = await prisma.kardexItem.findMany({
+      where: { code: { in: [...matCodes] } },
+      select: { code: true, nameFa: true },
+    });
+    const nameMap = new Map(items.map((i) => [i.code, i.nameFa]));
+    for (const g of groups.values()) {
+      for (const r of g.rows) {
+        r.nameFa = nameMap.get(r.code) ?? r.nameFa ?? null;
+      }
+    }
+  }
+
+  // Look up unit names in FixedInformation (code -> title)
+  if (unitCodes.size) {
+    const infos = await prisma.fixedInformation.findMany({
+      where: { code: { in: [...unitCodes] } },
+      select: { code: true, title: true },
+    });
+    const unitMap = new Map(infos.map((u) => [u.code, u.title]));
+    for (const g of groups.values()) {
+      for (const r of g.rows) {
+        if (r.unitCode) r.unitName = unitMap.get(String(r.unitCode)) ?? String(r.unitCode);
+      }
+    }
+  }
+
   // Keep only materials that have at least one row
   const present = RAW_MATERIAL_GROUPS
     .map(({ key, labelFa }) => {
-        const bucket = groups.get(key)!; // { labelFa, total, rows }
-        return { key, labelFa, rows: bucket.rows, total: bucket.total };
+      const bucket = groups.get(key)!;
+      return { key, labelFa, rows: bucket.rows, total: bucket.total };
     })
     .filter((g) => g.rows.length > 0);
-
 
   const nf = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 3 });
 
@@ -155,14 +200,15 @@ export default async function RawMaterialsDetailsSection({ date }: Props) {
               </div>
 
               <div className="overflow-x-auto">
-                <table className="min-w-[900px] w-full text-sm">
+                <table className="min-w-[1000px] w-full text-sm text-center">
                   <thead>
-                    <tr className="text-right bg-white">
+                    <tr className="bg-white">
                       <th className="px-3 py-2">#</th>
-                      <th className="px-3 py-2">زمان تأیید</th>
+                      <th className="px-3 py-2">تاریخ</th>           
                       <th className="px-3 py-2">شیفت</th>
-                      <th className="px-3 py-2">واحد</th>
-                      <th className="px-3 py-2">کد ماده</th>
+                      <th className="px-3 py-2">واحد</th>            
+                      <th className="px-3 py-2">کد ماذه اولیه</th>
+                      <th className="px-3 py-2">نام ماده اولیه</th>
                       <th className="px-3 py-2">مقدار</th>
                       <th className="px-3 py-2">توضیحات</th>
                     </tr>
@@ -171,10 +217,11 @@ export default async function RawMaterialsDetailsSection({ date }: Props) {
                     {g.rows.map((r, i) => (
                       <tr key={`${g.key}-${i}`} className="border-t">
                         <td className="px-3 py-2">{i + 1}</td>
-                        <td className="px-3 py-2" dir="ltr">{r.time?.replace("T", " ").slice(0, 19) ?? ""}</td>
+                        <td className="px-3 py-2">{r.dateFa}</td>
                         <td className="px-3 py-2">{r.shift ?? ""}</td>
-                        <td className="px-3 py-2">{r.unit ?? ""}</td>
+                        <td className="px-3 py-2">{r.unitName ?? ""}</td>
                         <td className="px-3 py-2" dir="ltr">{r.code}</td>
+                        <td className="px-3 py-2">{r.nameFa ?? ""}</td>
                         <td className="px-3 py-2 font-medium">{nf(r.amount)}</td>
                         <td className="px-3 py-2">{r.description ?? ""}</td>
                       </tr>
@@ -182,10 +229,8 @@ export default async function RawMaterialsDetailsSection({ date }: Props) {
                   </tbody>
                   <tfoot>
                     <tr className="border-t bg-gray-50 font-semibold">
-                      {/* # + time + shift + unit + code = 5 cols */}
-                      <td className="px-3 py-2" colSpan={5}>جمع</td>
+                      <td className="px-3 py-2" colSpan={7}>جمع</td>
                       <td className="px-3 py-2">{nf(g.total)}</td>
-                      {/* remaining column: description */}
                       <td className="px-3 py-2"></td>
                     </tr>
                   </tfoot>
@@ -198,4 +243,4 @@ export default async function RawMaterialsDetailsSection({ date }: Props) {
     </section>
   );
 }
-// End of RawMaterialsDetailsSection.tsx
+// app/(protected)/reports/daily-production/components/ProductsSummarySection.tsx

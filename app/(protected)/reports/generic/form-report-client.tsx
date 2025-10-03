@@ -1,3 +1,5 @@
+// app/(protected)/reports/generic/form-report-client.tsx
+
 'use client';
 
 import { useEffect, useMemo, useRef, useState} from 'react'
@@ -8,6 +10,7 @@ import EditEntryModal from '@/components/forms/EditEntryModal'; // Add this impo
 import { useSearchParams } from 'next/navigation';
 import type { FieldType } from '@prisma/client';
 import { FieldType as FieldTypeEnum } from '@prisma/client';
+import { en } from 'zod/locales';
 
 // normalize string → Prisma FieldType (fallback: 'text')
 const toFieldType = (v: unknown): FieldType => {
@@ -15,8 +18,6 @@ const toFieldType = (v: unknown): FieldType => {
   const allowed = new Set(Object.values(FieldTypeEnum) as string[]);
   return allowed.has(s) ? (s as FieldType) : FieldTypeEnum.text;
 };
-
-const router = useRouter();
 
 // robust getters so TS doesn't complain about missing props
 const getRequired = (f: any): boolean =>
@@ -87,7 +88,8 @@ export default function FormReportClient({
   const [schema, setSchema] = useState<SchemaField[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  
+  const router = useRouter();
+
   // Edit modal state - REPLACE the old editModal state
   const [editModal, setEditModal] = useState<{
     open: boolean;
@@ -440,6 +442,7 @@ export default function FormReportClient({
 
   // open editor only if eligible - UPDATED to use EditEntryModal
   function openEdit(row: Row) {
+    console.log('openEdit', { row, canSendClient });
     if (!canSendClient) return;
     if (row.status !== 'submitted' && row.status !== 'draft') return;
     
@@ -448,13 +451,12 @@ export default function FormReportClient({
       id: row.id,
       createdAt: row.createdAt,
       status: row.status,
-      data: row.payload ?? {},
+      payload: { ...(row.payload ?? {}) },
       form: {
         code: meta?.formCode || code,
         titleFa: meta?.titleFa || 'فرم'
       }
     };
-    
     setEditModal({
       open: true,
       entry: entryData
@@ -792,37 +794,56 @@ export default function FormReportClient({
         )}
       </Modal>
 
-     {editModal.open && editModal.entry && (
+    {editModal.open && editModal.entry && (
       <EditEntryModal
         entry={editModal.entry}
         fields={schemaArr.map((field: any, i: number) => ({
           key: String(field.key),
           labelFa: labels[field.key] || String(field.key),
-          type: toFieldType(field.type),
-          required: getRequired(field),          // ✅ no TS error
+          type: field.type,
+          required: getRequired(field),
           config: field?.config ?? null,
-          order: getOrder(field, i),            // ✅ safe fallback
+          order: getOrder(field, i),
         }))}
         isOpen={true}
         onClose={() => setEditModal({ open: false, entry: null })}
         onSave={async (updatedData) => {
           const id = editModal.entry!.id;
           try {
-            const res = await fetch(`/api/form-entries/${id}`, {
+            // IMPORTANT: your API expects { payload: ... }
+            const res = await fetch(`/api/entries/${id}`, {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(updatedData),
+              credentials: 'include',
+              body: JSON.stringify({ payload: updatedData }),
             });
-            if (!res.ok) throw new Error(await res.text());
-            router.refresh();
+            if (!res.ok) {
+              const txt = await res.text().catch(() => '');
+              throw new Error(txt || 'خطا در ذخیره تغییرات');
+            }
+
+            // Optimistic update so the table changes immediately
+            setRows(prev =>
+              prev.map(r =>
+                r.id === id ? { ...r, payload: { ...r.payload, ...updatedData } } : r
+              )
+            );
+
             setEditModal({ open: false, entry: null });
-          } catch (err) {
+
+            // Trigger the client fetch useEffect (this actually refetches /api/reports/..)
+            refresh();
+
+            // (router.refresh() only helps server components; optional to keep)
+            // router.refresh();
+          } catch (err: any) {
             console.error(err);
-            alert('به‌روزرسانی ناموفق بود.');
+            alert(err?.message || 'به‌روزرسانی ناموفق بود.');
           }
         }}
       />
     )}
+
     </div>
   );
 

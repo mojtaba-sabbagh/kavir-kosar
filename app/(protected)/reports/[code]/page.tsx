@@ -4,11 +4,10 @@ import { cookies } from 'next/headers';
 import Link from 'next/link';
 
 /** Read a cookie value using cookies().getAll() only */
-function readCookie(name: string): string | null {
+const readCookie = async (name: string) => {
   try {
-    const jar: any = cookies();
-    const all: Array<{ name: string; value: string }> =
-      typeof jar.getAll === 'function' ? jar.getAll() : [];
+    const cookieStore = await cookies(); // ✅ Await here
+    const all = cookieStore.getAll();
     const hit = all.find((c) => c.name === name);
     return hit?.value ?? null;
   } catch {
@@ -19,9 +18,9 @@ function readCookie(name: string): string | null {
 /** Get userId from your session cookie(s). Adjust the names as needed. */
 async function getOptionalUserId(): Promise<string | null> {
   return (
-    readCookie('sessionUserId') ||
-    readCookie('uid') ||
-    readCookie('userId')
+    await readCookie('sessionUserId') ||
+    await readCookie('uid') ||
+    await readCookie('userId')
   );
 }
 
@@ -55,10 +54,16 @@ async function getCanSendForForm(formId: string): Promise<boolean> {
   return !!hit;
 }
 
+const removePrefix = (str: string, prefix: string) => {
+  if (str.startsWith(prefix)) {
+    return str.slice(prefix.length);
+  }
+  return str;
+};
+
 export default async function ReportByCode(ctx: { params: Promise<{ code: string }> }) {
   const params = await ctx.params;
   const decoded = decodeURIComponent(params.code);
-
   // 1) Find report by code
   const rpt = await prisma.report.findFirst({
     where: { code: decoded },
@@ -69,9 +74,11 @@ export default async function ReportByCode(ctx: { params: Promise<{ code: string
   // 2) Custom page?
   if (rpt.url) redirect(rpt.url);
 
+  const formcode = removePrefix(decoded, 'RPT:FORM:');
+
   // 3) Resolve form by code (report code == form code)
   const form = await prisma.form.findUnique({
-    where: { code: decoded },
+    where: { code: formcode },
     select: { id: true, titleFa: true },
   });
   const formId = form?.id ?? null;

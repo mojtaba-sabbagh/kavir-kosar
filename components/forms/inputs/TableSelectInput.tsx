@@ -5,11 +5,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 type Props = {
   label: string;
   value: string;
-  onChange: (val: string) => void;
+  currentTitle?: string; // NEW
+  onChange: (val: string, optionalTitle?: string) => void;
   config: { table?: string; type?: string };
 };
 
-export default function TableSelectInput({ label, value, onChange, config }: Props) {
+export default function TableSelectInput({ label, value, currentTitle, onChange, config }: Props) {
   const table = (config?.table || 'fixedInformation').trim();
   const type  = (config?.type  || '').trim();
 
@@ -30,7 +31,6 @@ export default function TableSelectInput({ label, value, onChange, config }: Pro
     return `?${p.toString()}`;
   }, [table, type, q]);
 
-  // Fetch when opened or query changes
   useEffect(() => {
     if (!open) return;
     let cancel = false;
@@ -50,32 +50,26 @@ export default function TableSelectInput({ label, value, onChange, config }: Pro
     return () => { cancel = true; };
   }, [open, qs]);
 
-  // Open and initial load on first mount if you want to prefill
   useEffect(() => {
     if (!mounted.current) {
       mounted.current = true;
-      // optional: open once to preload
-      // setOpen(true);
     }
   }, []);
 
   const selectedLabel = useMemo(() => {
     const f = opts.find(o => o.value === value);
-    return f?.label || '';
-  }, [opts, value]);
+    return f?.label || currentTitle || ''; // prefer live option label, then cached currentTitle
+  }, [opts, value, currentTitle]);
 
   return (
     <div className="space-y-1" dir="rtl">
-
       <div
         className="relative"
         onFocus={() => setOpen(true)}
         onBlur={(e) => {
-          // close only when leaving the whole widget
           if (!e.currentTarget.contains(e.relatedTarget as Node)) setOpen(false);
         }}
       >
-        {/* Search box (read-only if you prefer) */}
         <input
           className="w-full border rounded-md px-3 py-2"
           placeholder="جستجو…"
@@ -84,7 +78,6 @@ export default function TableSelectInput({ label, value, onChange, config }: Pro
           onFocus={() => setOpen(true)}
         />
 
-        {/* Dropdown */}
         {open && (
           <div className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-md border bg-white shadow">
             {loading && <div className="px-3 py-2 text-sm text-gray-500">در حال جستجو…</div>}
@@ -101,7 +94,7 @@ export default function TableSelectInput({ label, value, onChange, config }: Pro
                 className={`block w-full text-right px-3 py-2 hover:bg-gray-50 ${o.value === value ? 'bg-blue-50' : ''}`}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => {
-                  onChange(o.value); // store **code**
+                  onChange(o.value, o.label); // pass code + label back
                   setOpen(false);
                 }}
               >

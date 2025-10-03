@@ -1,4 +1,3 @@
-// components/forms/EditEntryModal.tsx
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
@@ -19,6 +18,62 @@ type Props = {
   onSave: (updatedData: Record<string, any>) => Promise<void>;
 };
 
+function normalizeKind(f: { type: any; config?: any }):
+  | 'kardexItem' | 'tableSelect' | 'select' | 'multiselect'
+  | 'date' | 'datetime' | 'number' | 'text' | 'textarea'
+  | 'checkbox' | 'entryRef' | 'entryRefMulti' | 'group' | 'file' {
+  const raw = String(f.type ?? '').toLowerCase();
+  if (raw === 'kardexitem' || raw === 'kardex_item' || raw === 'kardex') return 'kardexItem';
+  if (raw === 'tableselect' || raw === 'table_select') return 'tableSelect';
+  if ((f as any)?.config?.tableSelect) return 'tableSelect';
+  if (raw === 'multiselect') return 'multiselect';
+  if (raw === 'entryref') return 'entryRef';
+  if (raw === 'entryrefmulti') return 'entryRefMulti';
+  if (raw === 'datetime') return 'datetime';
+  if (raw === 'date') return 'date';
+  if (raw === 'number') return 'number';
+  if (raw === 'textarea') return 'textarea';
+  if (raw === 'checkbox') return 'checkbox';
+  if (raw === 'select') return 'select';
+  if (raw === 'group') return 'group';
+  if (raw === 'file') return 'file';
+  return 'text';
+}
+
+// --- helpers ---------------------------------------------------------------
+
+// Always extract a *code string* from either a raw string or an object {code,...}
+function extractCode(v: any): string {
+  if (v == null) return '';
+  if (typeof v === 'object') {
+    const raw = (v as any).code ?? (v as any).value ?? (v as any).id ?? '';
+    return String(raw ?? '');
+  }
+  return String(v);
+}
+
+// convert payload value (ISO string like "2025-10-01") -> Date for JDatePicker
+function toJSDate(val: any): Date | null {
+  if (!val) return null;
+  if (val instanceof Date && !isNaN(+val)) return val;
+  if (typeof val === 'string') {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(val);
+    if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
+  }
+  return null;
+}
+
+// convert JDatePicker output (Date or string) -> ISO "YYYY-MM-DD"
+function toIsoDate(val: any): string {
+  if (!val) return '';
+  const d = val instanceof Date ? val : new Date(val);
+  if (isNaN(+d)) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 export default function EditEntryModal({ entry, fields, isOpen, onClose, onSave }: Props) {
   const sorted = useMemo(
     () => [...fields].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
@@ -30,7 +85,6 @@ export default function EditEntryModal({ entry, fields, isOpen, onClose, onSave 
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  // --- label caches (like report displayMaps) ---
   // select/multiselect: key -> code->title
   const [selectMaps, setSelectMaps] = useState<Record<string, Record<string, string>>>({});
   // tableSelect: key -> code->title
@@ -38,13 +92,12 @@ export default function EditEntryModal({ entry, fields, isOpen, onClose, onSave 
   // kardex: code -> "nameFa – code"
   const [kardexMap, setKardexMap] = useState<Record<string, string>>({});
 
-  // Initialize form values from entry payload once
+  // Initialize values + prime select option maps
   useEffect(() => {
     if (!isOpen) return;
     const data = (entry as any).payload || (entry as any).data || {};
     setValues(data);
 
-    // prime options map for select/multiselect from config
     const maps: Record<string, Record<string, string>> = {};
     for (const f of fields) {
       const cfg = (f.config ?? {}) as any;
@@ -59,7 +112,7 @@ export default function EditEntryModal({ entry, fields, isOpen, onClose, onSave 
     setSelectMaps(maps);
   }, [isOpen, entry, fields]);
 
-  // Fetch helpers
+  // --- fetch helpers -------------------------------------------------------
   async function fetchJson(url: string) {
     const r = await fetch(url, { cache: 'no-store', credentials: 'include' });
     if (!r.ok) return null;
@@ -70,98 +123,79 @@ export default function EditEntryModal({ entry, fields, isOpen, onClose, onSave 
     }
   }
 
-  // Get human title for a tableSelect code (tries ?code= first, then ?q=)
-  async function ensureTableSelectTitle(f: Pick<FormField, 'key' | 'config'>, code: string) {
+  // Get human title for a tableSelect code (EXACT MATCH ONLY)
+// --- inside components/forms/EditEntryModal.tsx ---
+
+// EXACT match only: resolve FixedInformation title(s) by code
+    async function ensureTableSelectTitle(
+    f: Pick<FormField, 'key' | 'config'>,
+    code: string
+    ) {
     if (!code) return;
     const key = f.key;
-    const cfg = (f.config ?? {}) as any;
-    const ts = (cfg.tableSelect ?? cfg ?? {}) as { table?: string; type?: string };
-    const table = ts.table || 'fixedInformation';
-    const type = ts.type || '';
 
-    // If already cached, skip
+    // already cached?
     if (tsMaps[key]?.[code]) return;
 
-    const urls = [
-      `/api/table-select?table=${encodeURIComponent(table)}&type=${encodeURIComponent(type)}&code=${encodeURIComponent(code)}&limit=1`,
-      `/api/table-select?table=${encodeURIComponent(table)}&type=${encodeURIComponent(type)}&q=${encodeURIComponent(code)}&limit=10`,
-    ];
+    try {
+        const r = await fetch(
+        `/api/lookups/fixed?codes=${encodeURIComponent(code)}`,
+        { cache: 'no-store', credentials: 'include' }
+        );
+        const j = await r.json().catch(() => null);
+        const title =
+        j?.items?.find((it: any) => String(it.code) === String(code))?.title;
 
-    let title: string | null = null;
-    for (const u of urls) {
-      const j = await fetchJson(u);
-      if (!j) continue;
-      const raw: Array<any> = Array.isArray(j.items)
-        ? j.items
-        : Array.isArray(j.options)
-        ? j.options
-        : [];
-      // try exact code match first
-      const exact =
-        raw.find((it: any) => (it.code ?? it.value) === code) ||
-        raw.find((it: any) => String(it.code ?? it.value) === String(code));
-      if (exact) {
-        title = String(exact.title ?? exact.label ?? code);
-        break;
-      }
-      // fallback: first result's title
-      if (raw[0]) {
-        title = String(raw[0].title ?? raw[0].label ?? code);
-        break;
-      }
+        setTsMaps((prev) => ({
+        ...prev,
+        [key]: { ...(prev[key] || {}), [code]: title || String(code) },
+        }));
+    } catch {
+        // keep code if title not found
+        setTsMaps((prev) => ({
+        ...prev,
+        [key]: { ...(prev[key] || {}), [code]: String(code) },
+        }));
+    }
     }
 
-    setTsMaps(prev => ({
-      ...prev,
-      [key]: { ...(prev[key] || {}), [code]: title || code },
-    }));
-  }
-
-  // Get "nameFa – code" for kardex code.
-  // If you store name in config.nameKey, use that first.
   async function ensureKardexLabel(code: string, nameFromSnapshot?: string) {
     if (!code) return;
     if (kardexMap[code]) return;
-    if (nameFromSnapshot && nameFromSnapshot.trim()) {
+    if (nameFromSnapshot?.trim()) {
       setKardexMap(prev => ({ ...prev, [code]: `${nameFromSnapshot} – ${code}` }));
       return;
     }
-
-    // Try endpoints your KardexPicker likely uses; fall back gracefully
-    const urls = [
-      `/api/kardex/items?code=${encodeURIComponent(code)}&limit=1`,
-      `/api/kardex/search?q=${encodeURIComponent(code)}&limit=1`,
-    ];
-    let label: string | null = null;
-    for (const u of urls) {
-      const j = await fetchJson(u);
-      if (!j) continue;
-      const arr: Array<any> = Array.isArray(j.items) ? j.items : Array.isArray(j.data) ? j.data : [];
-      const it =
-        arr.find((x: any) => x.code === code) ||
-        arr[0];
-      if (it) {
-        label = `${String(it.nameFa ?? it.title ?? '')} – ${it.code}`;
-        break;
-      }
+    try {
+      const r = await fetch(`/api/kardex/items?code=${encodeURIComponent(code)}&limit=1`, { cache: "no-store" });
+      const j = await r.json().catch(() => null);
+      const it = j?.items?.[0];
+      const label = it ? `${String(it.nameFa ?? "")} – ${it.code}` : code;
+      setKardexMap(prev => ({ ...prev, [code]: label }));
+    } catch {
+      setKardexMap(prev => ({ ...prev, [code]: code }));
     }
-    setKardexMap(prev => ({ ...prev, [code]: label || code }));
   }
 
-  // Prefetch labels for current saved values (when modal opens / values change)
+  // Prefetch labels for current saved values
   useEffect(() => {
     if (!isOpen) return;
     (async () => {
       for (const f of fields) {
         const v = values[f.key];
         if (!v) continue;
+        const kind = normalizeKind(f);
 
-        if (f.type === 'tableSelect' && typeof v === 'string') {
-          await ensureTableSelectTitle(f, v);
+        if (kind === 'tableSelect') {
+          const code = extractCode(v);
+          if (code) await ensureTableSelectTitle(f as any, code);
         }
-        if (f.type === 'kardexItem' && typeof v === 'string') {
-          const nameKey = (f.config as any)?.nameKey as string | undefined;
-          await ensureKardexLabel(v, nameKey ? values[nameKey] : undefined);
+        if (kind === 'kardexItem') {
+          const code = extractCode(v);
+          if (code) {
+            const nameKey = (f.config as any)?.nameKey as string | undefined;
+            await ensureKardexLabel(code, nameKey ? values[nameKey] : undefined);
+          }
         }
       }
     })();
@@ -212,42 +246,42 @@ export default function EditEntryModal({ entry, fields, isOpen, onClose, onSave 
   // Render current value using same idea as report (maps + fallbacks)
   function renderCurrentValueForField(f: Props['fields'][number]): string | undefined {
     const raw = values[f.key];
+    const kind = normalizeKind(f);
     if (raw == null || raw === '') return undefined;
 
-    // select / multiselect: from options map
-    if (f.type === 'select') {
+    if (kind === 'select') {
       const m = selectMaps[f.key] || {};
       return m[String(raw)] ?? String(raw);
     }
-    if (f.type === 'multiselect' && Array.isArray(raw)) {
+    if (kind === 'multiselect' && Array.isArray(raw)) {
       const m = selectMaps[f.key] || {};
       return raw.map((x: any) => m[String(x)] ?? String(x)).join('، ');
     }
-
-    // tableSelect: from ts map
-    if (f.type === 'tableSelect') {
+    if (kind === 'tableSelect') {
+      const code = extractCode(raw);
       const m = tsMaps[f.key] || {};
-      const code = String(raw);
-      return m[code] ?? code;
+      return m[code] ?? (typeof raw === 'object' && (raw as any).title ? (raw as any).title : code);
     }
-
-    // kardexItem: from kardexMap or nameKey snapshot
-    if (f.type === 'kardexItem') {
-      const code = String(raw);
+    if (kind === 'kardexItem') {
+      const code = extractCode(raw);
       const nameKey = (f.config as any)?.nameKey as string | undefined;
       const snap = nameKey ? values[nameKey] : undefined;
       return kardexMap[code] || (snap ? `${snap} – ${code}` : code);
     }
-
     return undefined;
   }
 
   const renderField = (f: Props['fields'][0]) => {
     const cfg = (f.config ?? {}) as any;
+    const kind = normalizeKind(f);
     const common =
       'w-full rounded-md border px-3 py-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500';
     const ltr = isLtrField(f.type as FieldType, f.key) ? 'ltr' : 'rtl';
     const currentText = renderCurrentValueForField(f);
+
+    // compute *code string* / *title* once for tableSelect
+    const tsCode   = kind === 'tableSelect' ? extractCode(values[f.key]) : '';
+    const tsTitle  = kind === 'tableSelect' ? (tsMaps[f.key]?.[tsCode] ?? '') : '';
 
     return (
       <div key={f.key} className="mb-4">
@@ -256,11 +290,9 @@ export default function EditEntryModal({ entry, fields, isOpen, onClose, onSave 
           {f.required ? ' *' : ''}
         </label>
 
-        {/* show current rendered value (like report) */}
         <CurrentValueLine text={currentText} />
 
-        {/* inputs */}
-        {f.type === 'text' && (
+        {kind === 'text' && (
           <input
             className={common}
             dir={ltr}
@@ -269,7 +301,7 @@ export default function EditEntryModal({ entry, fields, isOpen, onClose, onSave 
           />
         )}
 
-        {f.type === 'textarea' && (
+        {kind === 'textarea' && (
           <textarea
             className={common}
             dir="rtl"
@@ -279,7 +311,7 @@ export default function EditEntryModal({ entry, fields, isOpen, onClose, onSave 
           />
         )}
 
-        {f.type === 'number' && (
+        {kind === 'number' && (
           <input
             type="number"
             inputMode="decimal"
@@ -293,32 +325,44 @@ export default function EditEntryModal({ entry, fields, isOpen, onClose, onSave 
             placeholder={cfg.placeholder ?? ''}
           />
         )}
-
-        {f.type === 'date' && (
-          <JDatePicker value={(values[f.key] as string | undefined) ?? null} onChange={iso => set(f.key, iso)} />
+        
+        {kind === 'date' && (
+        <div dir="ltr" className="w-full">
+            <JDatePicker
+            value={typeof values[f.key] === 'string' ? (values[f.key] as string) : null}
+            onChange={(iso: string | null) => {
+                set(f.key, iso ?? '');
+            }}
+            />
+        </div>
         )}
 
-        {f.type === 'datetime' && (
-          <JDateTimePicker value={(values[f.key] as string | undefined) ?? null} onChange={iso => set(f.key, iso)} />
+        {kind === 'datetime' && (
+          <JDateTimePicker
+            value={(values[f.key] as string | undefined) ?? null}
+            onChange={iso => set(f.key, iso)}
+          />
         )}
 
-        {f.type === 'checkbox' && (
+        {kind === 'checkbox' && (
           <label className="inline-flex items-center gap-2">
-            <input type="checkbox" checked={!!values[f.key]} onChange={e => set(f.key, e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={!!values[f.key]}
+              onChange={e => set(f.key, e.target.checked)}
+            />
             <span>بله</span>
           </label>
         )}
 
-        {f.type === 'select' && (
+        {kind === 'select' && (
           <select
             className={common}
             dir="rtl"
             value={values[f.key] ?? (cfg?.default ?? '')}
             onChange={e => set(f.key, e.target.value)}
           >
-            <option value="" disabled>
-              انتخاب کنید…
-            </option>
+            <option value="" disabled>انتخاب کنید…</option>
             {(cfg?.options ?? []).map((opt: any) => (
               <option key={String(opt.value)} value={String(opt.value)}>
                 {optionLabel(opt)}
@@ -327,7 +371,7 @@ export default function EditEntryModal({ entry, fields, isOpen, onClose, onSave 
           </select>
         )}
 
-        {f.type === 'multiselect' && (
+        {kind === 'multiselect' && (
           <select
             multiple
             className={common}
@@ -346,10 +390,12 @@ export default function EditEntryModal({ entry, fields, isOpen, onClose, onSave 
           </select>
         )}
 
-        {f.type === 'file' && (
+        {kind === 'file' && (
           <div className="space-y-2">
             {values[f.key] && (
-              <div className="text-sm text-green-600">فایل موجود: {String(values[f.key]).split('/').pop()}</div>
+              <div className="text-sm text-green-600">
+                فایل موجود: {String(values[f.key]).split('/').pop()}
+              </div>
             )}
             <input
               type="file"
@@ -369,7 +415,7 @@ export default function EditEntryModal({ entry, fields, isOpen, onClose, onSave 
           </div>
         )}
 
-        {f.type === 'entryRef' && (
+        {kind === 'entryRef' && (
           <EntryPicker
             value={values[f.key] as string | undefined}
             onChange={v => set(f.key, v)}
@@ -377,7 +423,7 @@ export default function EditEntryModal({ entry, fields, isOpen, onClose, onSave 
           />
         )}
 
-        {f.type === 'entryRefMulti' && (
+        {kind === 'entryRefMulti' && (
           <EntryMultiPicker
             value={(values[f.key] as string[] | undefined) ?? []}
             onChange={arr => set(f.key, arr)}
@@ -385,42 +431,40 @@ export default function EditEntryModal({ entry, fields, isOpen, onClose, onSave 
           />
         )}
 
-        {f.type === 'kardexItem' && (
+        {kind === 'kardexItem' && (
           <KardexPicker
             label={f.labelFa}
-            value={(values[f.key] as string) || ''}
+            value={extractCode(values[f.key])}
             onSelect={it => {
-              set(f.key, it.code);
+              set(f.key, it.code); // keep code in payload
               const nameKey = (f.config as any)?.nameKey as string | undefined;
               if (nameKey) set(nameKey, it.nameFa);
-              // update cache immediately for snappy UI
               setKardexMap(prev => ({ ...prev, [it.code]: `${it.nameFa} – ${it.code}` }));
             }}
           />
         )}
 
-        {f.type === 'tableSelect' && (
+        {kind === 'tableSelect' && (
           <TableSelectInput
             label={f.labelFa}
-            value={(values[f.key] as string) ?? ''}
+            value={tsCode}                       
+            currentTitle={tsTitle || undefined}     
             onChange={(val: string, optionalTitle?: string) => {
-              set(f.key, val);
-              // if your TableSelectInput returns title, cache it (nice UX)
+              set(f.key, val);                        
               if (optionalTitle) {
                 setTsMaps(prev => ({
                   ...prev,
                   [f.key]: { ...(prev[f.key] || {}), [val]: optionalTitle },
                 }));
               } else {
-                // otherwise, hydrate later
-                ensureTableSelectTitle(f, val);
+                ensureTableSelectTitle(f as any, val);
               }
             }}
             config={((cfg?.tableSelect ?? cfg ?? {}) as { table?: string; type?: string })}
           />
         )}
 
-        {String(f.type) === 'group' && (
+        {kind === 'group' && (
           <GroupField
             fieldKey={f.key}
             label={f.labelFa}
@@ -428,7 +472,6 @@ export default function EditEntryModal({ entry, fields, isOpen, onClose, onSave 
             value={values[f.key]}
             onChange={v => set(f.key, v)}
             renderAtomic={(af: any, v: any, setV: (nv: any) => void) => {
-              // minimal reuse for nested fields
               const lt = isLtrField(af.type as FieldType, af.key) ? 'ltr' : 'rtl';
               if (af.type === 'text')
                 return (
@@ -495,7 +538,7 @@ export default function EditEntryModal({ entry, fields, isOpen, onClose, onSave 
   );
 }
 
-/* ------------ Reused small helpers (unchanged from your version) ------------ */
+/* ------------ Reused helpers (unchanged) ------------ */
 function EntryPicker({
   value,
   onChange,
@@ -589,7 +632,8 @@ function GroupField({
   const arr: any[] = Array.isArray(value) ? value : [];
   const add = () => onChange([...(arr || []), {}]);
   const del = (i: number) => onChange(arr.filter((_, idx) => idx !== i));
-  const setIdx = (i: number, k: string, v: any) => onChange(arr.map((row, idx) => (idx === i ? { ...row, [k]: v } : row)));
+  const setIdx = (i: number, k: string, v: any) =>
+    onChange(arr.map((row, idx) => (idx === i ? { ...row, [k]: v } : row)));
 
   return (
     <div className="space-y-2 border rounded-md p-4">

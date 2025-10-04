@@ -16,6 +16,20 @@ function fmtDate(v: string | Date | null | undefined) {
   }).format(d);
 }
 
+type EntryStatus = 'draft' | 'submitted' | 'confirmed' | 'finalConfirmed';
+function statusFa(s: EntryStatus) {
+  switch (s) {
+    case 'draft':
+      return 'پیش‌نویس';
+    case 'submitted':
+      return 'ارسال شده';
+    case 'confirmed':
+      return 'تأیید شده';
+    case 'finalConfirmed':
+      return 'تأیید نهایی';
+  }
+}
+
 export default async function EntryByIdPage(props: { params: Promise<{ entryId: string }> }) {
   const { entryId } = await props.params;
   const id = entryId;
@@ -151,7 +165,7 @@ export default async function EntryByIdPage(props: { params: Promise<{ entryId: 
         <div className="text-sm text-gray-500 mt-1 flex gap-2">
           <span>کد: {entry.form.code}</span>
           <span>تاریخ: {fmtDate(entry.createdAt)}</span>
-          <span>وضعیت: {entry.status}</span>
+          <span>وضعیت: {statusFa(entry.status)}</span>
         </div>
       </div>
 

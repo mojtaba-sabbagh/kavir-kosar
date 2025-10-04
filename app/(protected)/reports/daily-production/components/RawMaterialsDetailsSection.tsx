@@ -96,10 +96,13 @@ export default async function RawMaterialsDetailsSection({ date }: Props) {
   // DB: only finalConfirmed & payload.date exact match
   const entries = await prisma.formEntry.findMany({
     where: {
-      form: { code: "1031107" },
+      form: { code: "1031100" },
       status: "finalConfirmed",
-      payload: { path: ["date"], equals: date },
-    },
+        AND: [
+            { payload: { path: ['date'],    equals: date } },   
+            { payload: { path: ['product'], equals: '1'  } },
+            ],    
+        },
     select: { id: true, payload: true, finalConfirmedAt: true, createdAt: true },
     orderBy: { finalConfirmedAt: "asc" },
   });
@@ -206,7 +209,6 @@ export default async function RawMaterialsDetailsSection({ date }: Props) {
                       <th className="px-3 py-2">#</th>
                       <th className="px-3 py-2">تاریخ</th>           
                       <th className="px-3 py-2">شیفت</th>
-                      <th className="px-3 py-2">واحد</th>            
                       <th className="px-3 py-2">کد ماذه اولیه</th>
                       <th className="px-3 py-2">نام ماده اولیه</th>
                       <th className="px-3 py-2">مقدار</th>
@@ -219,7 +221,6 @@ export default async function RawMaterialsDetailsSection({ date }: Props) {
                         <td className="px-3 py-2">{i + 1}</td>
                         <td className="px-3 py-2">{r.dateFa}</td>
                         <td className="px-3 py-2">{r.shift ?? ""}</td>
-                        <td className="px-3 py-2">{r.unitName ?? ""}</td>
                         <td className="px-3 py-2" dir="ltr">{r.code}</td>
                         <td className="px-3 py-2">{r.nameFa ?? ""}</td>
                         <td className="px-3 py-2 font-medium">{nf(r.amount)}</td>

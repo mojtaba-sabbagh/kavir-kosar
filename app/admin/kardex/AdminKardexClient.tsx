@@ -146,7 +146,7 @@ export default function AdminKardexClient() {
             <input
               type="number" step="0.001" dir="ltr"
               className="border rounded px-2 py-1"
-              placeholder="وزن"
+              placeholder="وزن واحد"
               value={typeof newRow.extra?.weight === 'number' ? newRow.extra.weight : ''}
               onChange={e => {
                 const v = e.target.value;
@@ -190,7 +190,7 @@ export default function AdminKardexClient() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 text-center">
-                {['کد','نام','موجودی','موجودی ابتدای دوره','انبار','نقطه سفارش','وزن',''].map((h, i) => (
+                {['کد','نام','موجودی','موجودی ابتدای دوره','انبار','نقطه سفارش','وزن واحد',''].map((h, i) => (
                   <th key={i} className="p-2">{h}</th>
                 ))}
               </tr>
@@ -204,7 +204,7 @@ export default function AdminKardexClient() {
                       className="border rounded px-2 py-1 w-full"
                       value={it.code ?? ''}
                       onChange={e => setRows(prev => prev.map(p => p.id === it.id ? { ...p, code: e.target.value } : p))}
-                      onBlur={() => saveCell(it.id, { code: it.code })}
+                      onBlur={(e) => saveCell(it.id, { code: e.currentTarget.value })}
                     />
                   </td>
 
@@ -214,7 +214,7 @@ export default function AdminKardexClient() {
                       className="border rounded px-2 py-1 w-full"
                       value={it.nameFa ?? ''}
                       onChange={e => setRows(prev => prev.map(p => p.id === it.id ? { ...p, nameFa: e.target.value } : p))}
-                      onBlur={() => saveCell(it.id, { nameFa: it.nameFa })}
+                      onBlur={(e) => saveCell(it.id, { nameFa: e.currentTarget.value })}
                     />
                   </td>
 
@@ -225,7 +225,11 @@ export default function AdminKardexClient() {
                       className="border rounded px-2 py-1 w-full"
                       value={it.currentQty ?? ''}
                       onChange={e => setRows(prev => prev.map(p => p.id === it.id ? { ...p, currentQty: e.target.value === '' ? null : Number(e.target.value) } : p))}
-                      onBlur={() => saveCell(it.id, { currentQty: typeof it.currentQty === 'number' ? it.currentQty : null })}
+                      onBlur={(e) => {
+                        const v = e.currentTarget.value;
+                        const n = v === '' ? null : Number(v);
+                        saveCell(it.id, { currentQty: Number.isFinite(n as number) ? (n as number) : null });
+                      }}                 
                     />
                   </td>
 
@@ -235,7 +239,11 @@ export default function AdminKardexClient() {
                       className="border rounded px-2 py-1 w-full"
                       value={it.openingQty ?? ''}
                       onChange={e => setRows(prev => prev.map(p => p.id === it.id ? { ...p, openingQty: e.target.value === '' ? null : Number(e.target.value) } : p))}
-                      onBlur={() => saveCell(it.id, { openingQty: typeof it.openingQty === 'number' ? it.openingQty : null })}
+                      onBlur={(e) => {
+                        const v = e.currentTarget.value;
+                        const n = v === '' ? null : Number(v);
+                        saveCell(it.id, { openingQty: Number.isFinite(n as number) ? (n as number) : null });
+                      }}                    
                     />
                   </td>
 
@@ -245,7 +253,7 @@ export default function AdminKardexClient() {
                       className="border rounded px-2 py-1 w-full"
                       value={it.storage ?? ''}
                       onChange={e => setRows(prev => prev.map(p => p.id === it.id ? { ...p, storage: e.target.value } : p))}
-                      onBlur={() => saveCell(it.id, { storage: it.storage })}
+                      onBlur={(e) => saveCell(it.id, { storage: e.currentTarget.value })}
                     />
                   </td>
 
@@ -256,7 +264,11 @@ export default function AdminKardexClient() {
                       className="border rounded px-2 py-1 w-full"
                       value={it.orderPoint ?? ''}
                       onChange={e => setRows(prev => prev.map(p => p.id === it.id ? { ...p, orderPoint: e.target.value === '' ? null : Number(e.target.value) } : p))}
-                      onBlur={() => saveCell(it.id, { orderPoint: typeof it.orderPoint === 'number' ? it.orderPoint : null })}
+                      onBlur={(e) => {
+                        const v = e.currentTarget.value;
+                        const n = v === '' ? null : Number(v);
+                        saveCell(it.id, { orderPoint: Number.isFinite(n as number) ? (n as number) : null });
+                      }}                   
                     />
                   </td>
 
@@ -275,13 +287,11 @@ export default function AdminKardexClient() {
                             : p
                         ));
                       }}
-                      onBlur={() => {
-                        const raw = it.extra?.weight;
-                        const w = typeof raw === 'number' && Number.isFinite(raw) ? raw : null; // null = clear
-                        // Send only the delta; server merges into existing extra
-                        saveCell(it.id, { extra: { weight: w } as any });
-                        }
-                      }
+                      onBlur={(e) => {
+                        const v = e.currentTarget.value;
+                        const n = v === '' ? null : Number(v);
+                        saveCell(it.id, { extra: { weight: Number.isFinite(n as number) ? (n as number) : null } as any });
+                      }}
                     />
                   </td>
 

@@ -48,7 +48,9 @@ function minToHHMM(mins: number): string {
 async function fetchFixedTitles(codes: string[]): Promise<Map<string, string>> {
   noStore();
   const map = new Map<string, string>();
-  const cleaned = Array.from(new Set((codes || []).map(String).filter(c => /^\d+$/.test(c)))).slice(0, 300);
+  const cleaned = Array.from(
+    new Set((codes || []).map((c) => String(c).trim()).filter((c) => c))
+  ).slice(0, 300); // accept any non-empty code
   if (!cleaned.length) return map;
 
   const h = await headers();
@@ -56,7 +58,7 @@ async function fetchFixedTitles(codes: string[]): Promise<Map<string, string>> {
   const host = h.get("x-forwarded-host") ?? h.get("host");
   const proto = h.get("x-forwarded-proto") ?? "http";
   const base = process.env.NEXT_PUBLIC_APP_URL || (host ? `${proto}://${host}` : "");
-  const cookieHeader = ck.getAll().map(c => `${c.name}=${c.value}`).join("; ");
+  const cookieHeader = ck.getAll().map((c) => `${c.name}=${c.value}`).join("; ");
 
   const params = new URLSearchParams();
   params.set("codes", cleaned.join(","));
@@ -92,14 +94,18 @@ async function getForm102500WithFields() {
   });
   return form;
 }
-
 function parseConfig(cfg: unknown): any {
   if (!cfg) return {};
   if (typeof cfg === "string") {
-    try { return JSON.parse(cfg); } catch { return {}; }
+    try {
+      return JSON.parse(cfg);
+    } catch {
+      return {};
+    }
   }
   return cfg as any;
 }
+
 /* -------------------- entries by payload.date only -------------------- */
 async function getPauseEntriesByDate(formId: string, date: string) {
   return prisma.formEntry.findMany({
@@ -132,26 +138,43 @@ export default async function PauseDetailsSection({ date }: Props) {
   const selectMaps: Record<string, Record<string, string>> = {};
   for (const f of form.fields ?? []) {
     if (f.type === "select") {
-      const cfg = (f.config ?? {}) as any;
+      const cfg = parseConfig(f.config);
       const opts: Array<{ value: any; label: any }> = Array.isArray(cfg?.options) ? cfg.options : [];
-      selectMaps[f.key] = {};
+      const map: Record<string, string> = {};
       for (const o of opts) {
-        const v = o?.value;
-        if (v !== undefined && v !== null) selectMaps[f.key][String(v)] = String(o?.label ?? v);
+        const val = o?.value;
+        if (val !== undefined && val !== null) map[String(val)] = String(o?.label ?? val);
       }
+      selectMaps[f.key] = map;
     }
   }
 
   // Helper to map select field value -> label using the form's options
-  const selectLabel = (payload: any, key: string, fallbacks: string[] = []): string | undefined => {
-    const raw = pick<any>(payload, [key, ...fallbacks]);
-    if (raw == null || raw === "") return undefined;
-    const val =
-      typeof raw === "object" && raw !== null
-        ? raw.value ?? raw.code ?? raw.id ?? raw.label ?? ""
-        : raw;
-    const str = String(val ?? "");
-    return selectMaps[key]?.[str] ?? (typeof raw === "object" && raw?.label ? String(raw.label) : str);
+  const selectLabel = (payload: any, keys: string[]): string | undefined => {
+    for (const key of keys) {
+      const raw = payload?.[key];
+      if (raw == null || raw === "") continue;
+
+      const val =
+        typeof raw === "object" && raw !== null
+          ? raw.value ?? raw.code ?? raw.id ?? raw.label ?? ""
+          : raw;
+      const str = String(val ?? "");
+
+      // 1) prefer label from options of the SAME key
+      const fromSame = selectMaps[key]?.[str];
+      if (fromSame) return fromSame;
+
+      // 2) if payload already contains a label (rare), use it
+      if (typeof raw === "object" && raw?.label) return String(raw.label);
+
+      // 3) fallback: search other select maps for the same value
+      for (const k in selectMaps) if (selectMaps[k]?.[str]) return selectMaps[k][str];
+
+      // 4) last resort: show value
+      return str;
+    }
+    return undefined;
   };
 
   // 2) fetch entries for the day (by payload.date)
@@ -186,8 +209,8 @@ export default async function PauseDetailsSection({ date }: Props) {
       pauseCode = pauseRaw;
     }
 
-    // pause_cause (select) — map using the form's options
-    const cause = selectLabel(v, "pause_cause", ["puse_cause", "cause"]);
+    // pouse_cause (select) — map using the form's options (handle legacy variants)
+    const cause = selectLabel(v, ["pouse_cause", "pause_cause", "cause"]);
 
     const start = pick<string>(v, ["start", "شروع"]);
     const end = pick<string>(v, ["end", "پایان"]);

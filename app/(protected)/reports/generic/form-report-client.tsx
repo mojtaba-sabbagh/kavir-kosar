@@ -886,7 +886,7 @@ export default function FormReportClient({
         setLoading(true);
         setErr(null);
         try {
-          const url = `/api/table-select?table=${encodeURIComponent(
+          const url = `/api/table-select/data/options?codes=${encodeURIComponent(
             table
           )}&type=${encodeURIComponent(type)}&limit=200`;
           const r = await fetch(url, { cache: 'no-store', credentials: 'include', });

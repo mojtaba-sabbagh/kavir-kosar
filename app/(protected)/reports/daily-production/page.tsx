@@ -4,9 +4,13 @@ import RawMaterialsDetailsSection from "./components/RawMaterialsDetailsSection"
 import ProductsDetailsSection from "./components/ProductsDetailsSection";
 import ProductsSummarySection from "./components/ProductsSummarySection";
 import ReportFilterForm from "./components/ReportFilterForm";
-import { CollapsiblePanelAdvanced } from "../../../../components/ui/CollapsiblePanelAdvanced";
+import { CollapsiblePanelAdvanced } from "@/components/ui/CollapsiblePanelAdvanced";
+import WasteDetailsSection from "./components/WasteDetailsSection";
+import WasteSummarySection from "./components/WasteSummarySection";
+import PauseDetailsSection from "./components/PauseDetailsSection"; // ⬅️ NEW
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 type Search = { date?: string; hours?: string };
 
@@ -23,7 +27,7 @@ export default async function DailyProductionPage({ searchParams }: { searchPara
 
       {show ? (
         <>
-          {/* Raw materials panel (your existing) */}
+          {/* Raw materials panel */}
           <CollapsiblePanelAdvanced
             title="مواد اولیه"
             variant="accent"
@@ -43,8 +47,8 @@ export default async function DailyProductionPage({ searchParams }: { searchPara
               <RawMaterialsSection date={date} hours={hours} />
             </div>
           </CollapsiblePanelAdvanced>
-        
-        {/* Production panel */}
+
+          {/* Production panel */}
           <CollapsiblePanelAdvanced
             title="تولید"
             variant="accent"
@@ -54,9 +58,9 @@ export default async function DailyProductionPage({ searchParams }: { searchPara
             headerClassName="py-4"
             contentClassName="p-6"
             icon={
-                <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4m3-16v4m0 0v4m0-4h4m-4 0H9"/>
-                </svg>
+              <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4m3-16v4m0 0v4m0-4h4m-4 0H9"/>
+              </svg>
             }
           >
             <div className="space-y-8">
@@ -65,6 +69,44 @@ export default async function DailyProductionPage({ searchParams }: { searchPara
             </div>
           </CollapsiblePanelAdvanced>
 
+          {/* Waste panel */}
+          <CollapsiblePanelAdvanced
+            title="ضایعات"
+            variant="accent"
+            defaultOpen={false}
+            closedHintText="برای مشاهده ضایعات کلیک کنید +"
+            className="mb-6"
+            headerClassName="py-4"
+            contentClassName="p-6 bg-white"
+            icon={
+              <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 13h6m-7 4h8M10 9h4m7 3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            }
+          >
+            <div className="space-y-8">
+              <WasteDetailsSection date={date} />
+              <WasteSummarySection date={date} />
+            </div>
+          </CollapsiblePanelAdvanced>
+
+          {/* NEW: Pause panel */}
+          <CollapsiblePanelAdvanced
+            title="توقفات و تعمیرات"
+            variant="accent"
+            defaultOpen={false}
+            closedHintText="برای مشاهده توقفات کلیک کنید +"
+            className="mb-6"
+            headerClassName="py-4"
+            contentClassName="p-6 bg-white"
+            icon={
+              <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6M5 5h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2z" />
+              </svg>
+            }
+          >
+            <PauseDetailsSection date={date} />
+          </CollapsiblePanelAdvanced>
         </>
       ) : (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">

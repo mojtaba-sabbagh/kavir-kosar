@@ -456,7 +456,7 @@ export default function FormReportClient({
 
   // open editor only if eligible - UPDATED to use EditEntryModal
   function openEdit(row: Row) {
-    console.log('openEdit', { row, canSendClient });
+    //console.log('openEdit', { row, canSendClient });
     if (!canSendClient) return;
     if (row.status !== 'submitted' && row.status !== 'draft') return;
     

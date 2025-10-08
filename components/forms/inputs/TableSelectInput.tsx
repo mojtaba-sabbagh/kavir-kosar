@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 type Props = {
   label: string;
   value: string;
-  currentTitle?: string; // NEW
+  currentTitle?: string; // cached title when the option isn't in the first page
   onChange: (val: string, optionalTitle?: string) => void;
   config: { table?: string; type?: string };
 };
@@ -21,6 +21,7 @@ export default function TableSelectInput({ label, value, currentTitle, onChange,
   const [err, setErr] = useState<string | null>(null);
 
   const mounted = useRef(false);
+  const inputRef = useRef<HTMLInputElement | null>(null); // NEW
 
   const qs = useMemo(() => {
     const p = new URLSearchParams();
@@ -51,14 +52,12 @@ export default function TableSelectInput({ label, value, currentTitle, onChange,
   }, [open, qs]);
 
   useEffect(() => {
-    if (!mounted.current) {
-      mounted.current = true;
-    }
+    if (!mounted.current) mounted.current = true;
   }, []);
 
   const selectedLabel = useMemo(() => {
     const f = opts.find(o => o.value === value);
-    return f?.label || currentTitle || ''; // prefer live option label, then cached currentTitle
+    return f?.label || currentTitle || '';
   }, [opts, value, currentTitle]);
 
   return (
@@ -70,13 +69,49 @@ export default function TableSelectInput({ label, value, currentTitle, onChange,
           if (!e.currentTarget.contains(e.relatedTarget as Node)) setOpen(false);
         }}
       >
-        <input
-          className="w-full border rounded-md px-3 py-2"
-          placeholder="جستجو…"
-          value={open ? q : selectedLabel}
-          onChange={(e) => setQ(e.target.value)}
-          onFocus={() => setOpen(true)}
-        />
+        <div className="flex gap-2">
+          <input
+            ref={inputRef}
+            className="w-full border rounded-md px-3 py-2"
+            placeholder={open ? 'جستجو…' : (label || 'انتخاب کنید…')}
+            value={open ? q : selectedLabel}
+            onChange={(e) => setQ(e.target.value)}
+            onFocus={() => setOpen(true)}
+            onClick={() => setOpen(true)}                       
+            onKeyDown={(e) => {                              
+              if (!open) {
+                // printable keys only
+                if (e.key.length === 1 || e.key === 'Backspace') {
+                  setOpen(true);
+                  if (e.key === 'Backspace') {
+                    setQ(prev => prev.slice(0, -1));
+                  } else if (e.key.length === 1) {
+                    setQ(prev => prev + e.key);
+                  }
+                  e.preventDefault(); // avoid mutating the closed-state display text
+                }
+              }
+            }}
+          />
+
+          {/* Optional clear button */}
+          {value && (
+            <button
+              type="button"
+              className="shrink-0 rounded-md border px-2 py-1"
+              onClick={() => {
+                onChange('', '');    // clear selection
+                setQ('');
+                // keep focus and reopen so user can immediately search again
+                setOpen(true);
+                inputRef.current?.focus();
+              }}
+              title="پاک کردن"
+            >
+              ×
+            </button>
+          )}
+        </div>
 
         {open && (
           <div className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-md border bg-white shadow">
@@ -92,10 +127,12 @@ export default function TableSelectInput({ label, value, currentTitle, onChange,
                 key={o.value}
                 type="button"
                 className={`block w-full text-right px-3 py-2 hover:bg-gray-50 ${o.value === value ? 'bg-blue-50' : ''}`}
-                onMouseDown={(e) => e.preventDefault()}
+                onMouseDown={(e) => e.preventDefault()} // keep focus inside wrapper (prevents blur)
                 onClick={() => {
-                  onChange(o.value, o.label); // pass code + label back
+                  onChange(o.value, o.label);
                   setOpen(false);
+                  // (Optional) blur to ensure the next click triggers onFocus again:
+                  // inputRef.current?.blur();
                 }}
               >
                 {o.label} <span className="text-xs text-gray-500 ltr">({o.value})</span>

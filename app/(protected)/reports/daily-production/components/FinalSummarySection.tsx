@@ -1,7 +1,7 @@
 // app/(protected)/reports/daily-production/components/FinalSummarySection.tsx
 import { prisma } from "@/lib/db";
 
-type Props = { date: string; product?: string | number };
+type Props = { date: string; product?: string };
 
 /* ------------------ tiny utils ------------------ */
 function pick<T = any>(o: any, paths: string[], def?: any): T | undefined {
@@ -18,19 +18,13 @@ function num(x: any): number {
 function amountOf(v: any): number {
   return num(pick(v, ["amount", "qty", "مقدار", "تعداد"], 0));
 }
-function onlyDigits(s: any): string {
-  return String(s ?? "").replace(/[^\d]/g, "");
-}
 function codeFromAny(v: any): string {
   if (v == null) return "";
   if (typeof v === "object") {
     const raw = v.code ?? v.value ?? v.id ?? v.key ?? v.kardexCode ?? v.itemCode;
-    return raw ? onlyDigits(raw) : "";
+    return raw ? String(raw) : "";
   }
-  return onlyDigits(v);
-}
-function patternToRegex(p: string) {
-  return new RegExp("^" + p.replace(/\*/g, "\\d") + "$");
+  return String(v);
 }
 
 /* ----------- map form codes -> formIds, fetch entries by payload.date ----------- */
@@ -64,58 +58,19 @@ async function fetchKardexNames(codes: string[]) {
   if (!codes.length) return new Map<string, string>();
   const items = await prisma.kardexItem.findMany({
     where: { code: { in: Array.from(new Set(codes)) } },
-    select: { code: true, nameFa: true, name: true },
+    select: { code: true, nameFa: true }, // ✅ removed `name`
   });
   const m = new Map<string, string>();
   for (const it of items) {
-    m.set(it.code, String(it.nameFa ?? it.name ?? it.code));
+    m.set(it.code, String(it.nameFa ?? it.code)); // ✅ fallback without `name`
   }
   return m;
 }
 
-/* ------------------ product-aware matchers ------------------ */
-function normalizeProduct(p?: string | number): "1" | "2" {
-  const s = String(p ?? "1").trim();
-  return s === "2" ? "2" : "1";
-}
-function isRowForProduct(payload: any, product: "1" | "2"): boolean {
-  const pv = pick<any>(payload, ["product", "payload.product"]);
-  if (pv === undefined || pv === null || pv === "") return true; // untagged -> include
-  return String(pv) === product;
-}
-
-// Corn
-function isCorn(code: string, product: "1" | "2"): boolean {
-  return product === "1" ? code === "1101000001" : code.startsWith("112");
-}
-
-// Spices
-const SPICE_PATTERNS = {
-  "1": [patternToRegex("13***1****")],
-  "2": [patternToRegex("13***2****")],
-} as const;
-function isSpice(code: string, product: "1" | "2"): boolean {
-  return SPICE_PATTERNS[product].some((re) => re.test(code));
-}
-
-// Oil
-function isOil(code: string): boolean {
-  return code.startsWith("1204");
-}
-
-// Product weight (from 1031007)
-function isProductWeight(code: string, product: "1" | "2"): boolean {
-  return product === "1" ? code.startsWith("41") : code.startsWith("42");
-}
-
-// Lime (from 1031007)
-function isLime(code: string): boolean {
-  return code === "1522000001" || code.startsWith("1522000001");
-}
-
 /* --------------------------------- Component ---------------------------------- */
-export default async function FinalSummarySection({ date, product }: Props) {
-  const prod = normalizeProduct(product); // <- robust normalization
+export default async function FinalSummarySection({ date, product = "1" }: Props) {
+  const productLabel = product === "2" ? "پاپکورن" : "چیپس";
+
   const idsMap = await getFormIdsByCodes(["1031100", "1020600", "1031007"]);
   const rawsFormId = idsMap.get("1031100") ?? "";
   const remainFormId = idsMap.get("1020600") ?? "";
@@ -127,61 +82,56 @@ export default async function FinalSummarySection({ date, product }: Props) {
     getEntriesByDate(productFormId ? [productFormId] : [], date),
   ]);
 
-  // --- totals (filtered by product when payload.product exists) ---
-  let cornConsumedKg = 0;
-  let spicesConsumedKgTotal = 0;
-  let oilConsumedCans = 0;
+  // --- totals ---
+  let cornConsumedKg = 0;            // 1101000001
+  let spicesConsumedKgTotal = 0;     // startsWith 13
+  let oilConsumedCans = 0;           // startsWith 1204
   const spicesByCode = new Map<string, number>();
 
   for (const e of raws) {
     const v = (e.payload ?? {}) as any;
-    if (!isRowForProduct(v, prod)) continue;
-
     const code = codeFromAny(v.raw_material ?? v.rawMaterial ?? v.material ?? v.code);
     const amt = amountOf(v);
     if (!code || !amt) continue;
 
-    if (isCorn(code, prod)) cornConsumedKg += amt;
-    if (isSpice(code, prod)) {
+    if (code === "1101000001") cornConsumedKg += amt;
+    if (code.startsWith("13")) {
       spicesConsumedKgTotal += amt;
       spicesByCode.set(code, (spicesByCode.get(code) ?? 0) + amt);
     }
-    if (isOil(code)) oilConsumedCans += amt;
+    if (code.startsWith("1204")) oilConsumedCans += amt;
   }
 
   // remained corn from 1020600: payload.remaining_corn
   let remainedCornKg = 0;
   for (const e of remains) {
     const v = (e.payload ?? {}) as any;
-    if (!isRowForProduct(v, prod)) continue;
     remainedCornKg += num(
       pick(v, ["remaining_corn", "remainingCorn", "corn_remaining", "remained_corn"], 0)
     );
   }
 
-  // product weight & lime from 1031007 (product-aware)
+  // product weight from 1031007: raw_material startsWith 41
+  // lime from 1031007: raw_material equals/startsWith 1522000001
   let productWeightKg = 0;
   let limeConsumedKg = 0;
   for (const e of products) {
     const v = (e.payload ?? {}) as any;
-    if (!isRowForProduct(v, prod)) continue;
-
     const code = codeFromAny(v.raw_material ?? v.rawMaterial ?? v.material ?? v.code);
     const amt = amountOf(v);
     if (!code || !amt) continue;
 
-    if (isProductWeight(code, prod)) productWeightKg += amt;
-    if (isLime(code)) limeConsumedKg += amt;
+    if (code.startsWith("41")) productWeightKg += amt;
+    if (code === "1522000001" || code.startsWith("1522000001")) limeConsumedKg += amt;
   }
 
   // percentages
   const productPct = cornConsumedKg > 0 ? (productWeightKg / cornConsumedKg) * 100 : 0;
   const oilPct = productWeightKg > 0 ? (oilConsumedCans / productWeightKg) * 100 : 0;
 
-  // spice lines (label -> kg + % of product)
+  // per-spice breakdown
   const spiceCodes = Array.from(spicesByCode.keys());
   const kardexNames = await fetchKardexNames(spiceCodes);
-
   const spiceRows = spiceCodes
     .map((code) => {
       const kg = spicesByCode.get(code) ?? 0;
@@ -190,8 +140,6 @@ export default async function FinalSummarySection({ date, product }: Props) {
       return { code, label, kg, pct };
     })
     .sort((a, b) => a.label.localeCompare(b.label, "fa"));
-
-  const productLabel = prod === "1" ? "چیپس" : "پاپکورن";
 
   // render
   return (
@@ -263,7 +211,9 @@ export default async function FinalSummarySection({ date, product }: Props) {
             <tbody className="divide-y divide-gray-100 bg-white">
               {spiceRows.length === 0 ? (
                 <tr>
-                  <td colSpan={3} className="px-3 py-3 text-center text-gray-500">داده‌ای ثبت نشده است</td>
+                  <td colSpan={3} className="px-3 py-3 text-center text-gray-500">
+                    داده‌ای ثبت نشده است
+                  </td>
                 </tr>
               ) : (
                 spiceRows.map((s) => (

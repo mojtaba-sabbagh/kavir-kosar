@@ -7,7 +7,8 @@ import ReportFilterForm from "./components/ReportFilterForm";
 import { CollapsiblePanelAdvanced } from "@/components/ui/CollapsiblePanelAdvanced";
 import WasteDetailsSection from "./components/WasteDetailsSection";
 import WasteSummarySection from "./components/WasteSummarySection";
-import PauseDetailsSection from "./components/PauseDetailsSection"; // ⬅️ NEW
+import PauseDetailsSection from "./components/PauseDetailsSection";
+import FinalSummarySection from "./components/FinalSummarySection";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -90,7 +91,7 @@ export default async function DailyProductionPage({ searchParams }: { searchPara
             </div>
           </CollapsiblePanelAdvanced>
 
-          {/* NEW: Pause panel */}
+          {/* Pause panel */}
           <CollapsiblePanelAdvanced
             title="توقفات و تعمیرات"
             variant="accent"
@@ -106,6 +107,22 @@ export default async function DailyProductionPage({ searchParams }: { searchPara
             }
           >
             <PauseDetailsSection date={date} />
+          </CollapsiblePanelAdvanced>
+          <CollapsiblePanelAdvanced
+            title="جمع بندی"
+            variant="accent"
+            defaultOpen={false}
+            closedHintText="برای مشاهده جمع‌بندی کلیک کنید +"
+            className="mb-6"
+            headerClassName="py-4"
+            contentClassName="p-6 bg-white"
+            icon={
+              <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2a2 2 0 012-2h2a2 2 0 012 2v2M7 7h10M5 11h14M5 15h14" />
+              </svg>
+            }
+          >
+            <FinalSummarySection date={date} />
           </CollapsiblePanelAdvanced>
         </>
       ) : (

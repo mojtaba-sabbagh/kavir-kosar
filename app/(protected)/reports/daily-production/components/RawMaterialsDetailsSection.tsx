@@ -58,7 +58,7 @@ function normalizeIsoDateLike(input: unknown): string | null {
 
 /* -------------------- group definitions -------------------- */
 const RAW_MATERIAL_GROUPS = [
-  { key: "corn",   labelFa: "ذرت",   prefixes: ["11"] },
+  { key: "corn",   labelFa: "ذرت",   prefixes: ["110"] },
   { key: "oil",    labelFa: "روغن",  prefixes: ["1204"] },
   { key: "lime",   labelFa: "آهک",   prefixes: ["1522"] },
   { key: "spice",  labelFa: "ادویه", prefixes: ["13"] },

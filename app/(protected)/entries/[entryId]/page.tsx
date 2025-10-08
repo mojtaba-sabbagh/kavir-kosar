@@ -1,269 +1,189 @@
-// app/(protected)/reports/daily-production/components/PauseDetailsSection.tsx
-import { prisma } from "@/lib/db";
-import { headers, cookies } from "next/headers";
-import { unstable_noStore as noStore } from "next/cache";
+import { notFound } from 'next/navigation';
+import { prisma } from '@/lib/db';
+import Link from 'next/link';
+import ConfirmAction from '@/components/ConfirmAction'; // ⬅️ add this
 
-type Props = { date: string };
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
 
-/* ----------------- tiny utils ----------------- */
-function pick<T = any>(o: any, keys: string[], def?: any): T | undefined {
-  for (const k of keys) {
-    const val = k.split(".").reduce((acc: any, kk) => (acc ? acc[kk] : undefined), o);
-    if (val !== undefined && val !== null && val !== "") return val as T;
+function fmtDate(v: string | Date | null | undefined) {
+  if (!v) return '';
+  const d = typeof v === 'string' ? new Date(v) : v;
+  if (Number.isNaN(+d)) return String(v);
+  return new Intl.DateTimeFormat('fa-IR', {
+    dateStyle: 'short',
+    timeStyle: 'short',
+  }).format(d);
+}
+
+type EntryStatus = 'draft' | 'submitted' | 'confirmed' | 'finalConfirmed';
+function statusFa(s: EntryStatus) {
+  switch (s) {
+    case 'draft':
+      return 'پیش‌نویس';
+    case 'submitted':
+      return 'ارسال شده';
+    case 'confirmed':
+      return 'تأیید شده';
+    case 'finalConfirmed':
+      return 'تأیید نهایی';
   }
-  return def;
-}
-function isHHMM(s?: string): boolean {
-  return !!s && /^\d{1,2}:\d{2}$/.test(s);
-}
-function parseDateTime(dateISO: string, val?: string): Date | null {
-  if (!val) return null;
-  if (isHHMM(val)) return new Date(`${dateISO}T${val}:00`);
-  const d = new Date(val);
-  return isNaN(+d) ? null : d;
-}
-function formatTimeOnly(val?: string): string {
-  if (!val) return "—";
-  if (isHHMM(val)) return val;
-  const d = new Date(val);
-  return isNaN(+d)
-    ? "—"
-    : d.toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit" });
-}
-function diffMinutes(dateISO: string, start?: string, end?: string): number {
-  const s = parseDateTime(dateISO, start);
-  const e = parseDateTime(dateISO, end);
-  if (!s || !e) return 0;
-  let m = Math.round((+e - +s) / 60000);
-  if (m < 0) m += 24 * 60; // across midnight
-  return m;
-}
-function minToHHMM(mins: number): string {
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
-/* ------------- FixedInformation lookup (pause tableSelect) ------------- */
-async function fetchFixedTitles(codes: string[]): Promise<Map<string, string>> {
-  noStore();
-  const map = new Map<string, string>();
-  const cleaned = Array.from(new Set((codes || []).map(String).filter(c => /^\d+$/.test(c)))).slice(0, 300);
-  if (!cleaned.length) return map;
+export default async function EntryByIdPage(props: { params: Promise<{ entryId: string }> }) {
+  const { entryId } = await props.params;
+  const id = entryId;
 
-  const h = await headers();
-  const ck = await cookies();
-  const host = h.get("x-forwarded-host") ?? h.get("host");
-  const proto = h.get("x-forwarded-proto") ?? "http";
-  const base = process.env.NEXT_PUBLIC_APP_URL || (host ? `${proto}://${host}` : "");
-  const cookieHeader = ck.getAll().map(c => `${c.name}=${c.value}`).join("; ");
-
-  const params = new URLSearchParams();
-  params.set("codes", cleaned.join(","));
-  const url = `${base}/api/lookups/fixed?${params.toString()}`;
-
-  try {
-    const r = await fetch(url, {
-      headers: { cookie: cookieHeader, accept: "application/json" },
-      cache: "no-store",
-      next: { revalidate: 0 },
-    });
-    const items: any[] = r.ok ? (await r.json().catch(() => null))?.items ?? [] : [];
-    for (const it of items) {
-      const code = String(it?.code ?? "");
-      const title = it?.title ?? it?.titleFa ?? it?.nameFa ?? it?.name ?? it?.label ?? "";
-      if (code) map.set(code, title ? String(title) : code);
-    }
-    for (const c of cleaned) if (!map.has(c)) map.set(c, c);
-  } catch {
-    for (const c of cleaned) map.set(c, c);
-  }
-  return map;
-}
-
-/* ---------------- form + fields (to get select options) ---------------- */
-async function getForm102500WithFields() {
-  const form = await prisma.form.findFirst({
-    where: { code: "102500" },
+  const entry = await prisma.formEntry.findUnique({
+    where: { id },
     select: {
       id: true,
-      fields: { select: { key: true, type: true, config: true } },
+      createdAt: true,
+      status: true,
+      payload: true,
+      form: {
+        select: {
+          id: true,
+          code: true,
+          titleFa: true,
+          fields: {
+            select: { key: true, labelFa: true, type: true, config: true, order: true },
+          },
+        },
+      },
     },
   });
-  return form;
-}
 
-function parseConfig(cfg: unknown): any {
-  if (!cfg) return {};
-  if (typeof cfg === "string") {
-    try { return JSON.parse(cfg); } catch { return {}; }
-  }
-  return cfg as any;
-}
-/* -------------------- entries by payload.date only -------------------- */
-async function getPauseEntriesByDate(formId: string, date: string) {
-  return prisma.formEntry.findMany({
-    where: {
-      formId,
-      OR: [
-        { payload: { path: ["date"], equals: date } },
-        { payload: { path: ["payloadDate"], equals: date } },
-        { payload: { path: ["tarikh"], equals: date } },
-        { payload: { path: ["payload", "date"], equals: date } },
-      ],
-    },
-    select: { id: true, payload: true },
-    orderBy: { id: "asc" },
-  });
-}
+  if (!entry || !entry.form) notFound();
 
-export default async function PauseDetailsSection({ date }: Props) {
-  // 1) load form and its fields (to map select values -> labels)
-  const form = await getForm102500WithFields();
-  if (!form?.id) {
-    return (
-      <div className="rounded-lg border border-gray-200 bg-white p-4 text-gray-700">
-        فرم 102500 یافت نشد.
-      </div>
-    );
-  }
+  const fields = [...(entry.form.fields ?? [])].sort(
+    (a, b) => (a.order ?? 0) - (b.order ?? 0)
+  );
 
-  // Build select options map: key -> (value -> label)
-  const selectMaps: Record<string, Record<string, string>> = {};
-  for (const f of form.fields ?? []) {
-    if (f.type === "select") {
-      const cfg = (f.config ?? {}) as any;
-      const opts: Array<{ value: any; label: any }> = Array.isArray(cfg?.options) ? cfg.options : [];
-      selectMaps[f.key] = {};
-      for (const o of opts) {
-        const v = o?.value;
-        if (v !== undefined && v !== null) selectMaps[f.key][String(v)] = String(o?.label ?? v);
-      }
-    }
-  }
+  const payload = (entry.payload ?? {}) as Record<string, any>;
 
-  // Helper to map select field value -> label using the form's options
-  const selectLabel = (payload: any, key: string, fallbacks: string[] = []): string | undefined => {
-    const raw = pick<any>(payload, [key, ...fallbacks]);
-    if (raw == null || raw === "") return undefined;
-    const val =
-      typeof raw === "object" && raw !== null
-        ? raw.value ?? raw.code ?? raw.id ?? raw.label ?? ""
-        : raw;
-    const str = String(val ?? "");
-    return selectMaps[key]?.[str] ?? (typeof raw === "object" && raw?.label ? String(raw.label) : str);
-  };
+  const kardexCodes = fields
+    .filter((f) => f.type === 'kardexItem')
+    .map((f) => String(payload[f.key] ?? ''))
+    .filter(Boolean);
 
-  // 2) fetch entries for the day (by payload.date)
-  const entries = await getPauseEntriesByDate(form.id, date);
+  const tableselectCodes = fields
+    .filter((f) => f.type === 'tableSelect') // ⚠️ keep exact casing
+    .map((f) => String(payload[f.key] ?? ''))
+    .filter(Boolean);
 
-  type Row = {
-    pauseCode?: string;
-    pauseTitle: string;
-    cause?: string; // select label
-    start?: string;
-    end?: string;
-    minutes: number;
-  };
-
-  // 3) gather rows + codes to resolve for pause (tableSelect)
-  const codes = new Set<string>();
-  const draft: Row[] = [];
-
-  for (const e of entries) {
-    const v = (e.payload ?? {}) as any;
-
-    // pause (tableSelect) — may be string code or object {code,value,id,title,label,...}
-    const pauseRaw = v?.pause ?? v?.pouse ?? v?.pauseCode ?? v?.pause_code;
-    let pauseCode: string | undefined;
-    let pauseLabel: string | undefined;
-    if (pauseRaw && typeof pauseRaw === "object") {
-      pauseCode = String(pauseRaw.code ?? pauseRaw.value ?? pauseRaw.id ?? "");
-      pauseLabel = String(
-        pauseRaw.title ?? pauseRaw.label ?? pauseRaw.titleFa ?? pauseRaw.nameFa ?? pauseRaw.name ?? ""
-      );
-    } else if (typeof pauseRaw === "string") {
-      pauseCode = pauseRaw;
-    }
-
-    // pause_cause (select) — map using the form's options
-    const cause = selectLabel(v, "pause_cause", ["puse_cause", "cause"]);
-
-    const start = pick<string>(v, ["start", "شروع"]);
-    const end = pick<string>(v, ["end", "پایان"]);
-    const dateISO = v?.date ?? v?.payloadDate ?? v?.tarikh ?? v?.payload?.date ?? date;
-
-    const minutes = diffMinutes(String(dateISO), start, end);
-
-    if (pauseCode) codes.add(pauseCode);
-    draft.push({
-      pauseCode,
-      pauseTitle: pauseLabel || (pauseCode ? String(pauseCode) : "—"),
-      cause,
-      start,
-      end,
-      minutes,
+  const kardexMap: Record<string, { code: string; nameFa: string }> = {};
+  if (kardexCodes.length) {
+    const items = await prisma.kardexItem.findMany({
+      where: { code: { in: kardexCodes } },
+      select: { code: true, nameFa: true },
     });
+    for (const it of items) kardexMap[it.code] = { code: it.code, nameFa: it.nameFa };
   }
 
-  if (!draft.length) {
-    return (
-      <div className="rounded-lg border border-gray-200 bg-white p-4 text-gray-700">
-        برای تاریخ انتخاب‌شده، رکوردی از «توقفات و تعمیرات» یافت نشد.
-      </div>
-    );
+  const tableselectMap: Record<string, { code: string; title: string }> = {};
+  if (tableselectCodes.length) {
+    const items = await prisma.fixedInformation.findMany({
+      where: { code: { in: tableselectCodes } },
+      select: { code: true, title: true },
+    });
+    for (const it of items) tableselectMap[it.code] = { code: it.code, title: it.title };
   }
 
-  // 4) resolve pause titles by code (FixedInformation)
-  const titleMap = await fetchFixedTitles(Array.from(codes));
-  const rows = draft.map((r) => ({
-    ...r,
-    pauseTitle:
-      (r.pauseCode && titleMap.get(r.pauseCode)) || r.pauseTitle || (r.pauseCode ?? "—"),
-  }));
+  function renderValue(f: typeof fields[number]) {
+    const v = payload[f.key];
+    if (v == null || v === '') return <span className="text-gray-400">—</span>;
 
-  // 5) total duration
-  const totalMin = rows.reduce((s, r) => s + (r.minutes || 0), 0);
+    if (f.type === 'select') {
+      const cfg = (f.config as any) ?? {};
+      const opts: Array<{ value: string; label: string }> = Array.isArray(cfg.options) ? cfg.options : [];
+      const found = opts.find(o => String(o.value) === String(v));
+      return <span>{found?.label ?? String(v)}</span>;
+    }
+    if (f.type === 'multiselect' && Array.isArray(v)) {
+      const cfg = (f.config as any) ?? {};
+      const opts: Array<{ value: string; label: string }> = Array.isArray(cfg.options) ? cfg.options : [];
+      const values: string[] = Array.isArray(v) ? v.map(String) : [];
+      const labels = values.map(val => opts.find(o => String(o.value) === val)?.label ?? val);
+      return <span>{labels.join('، ')}</span>;
+    }
 
-  // 6) render
+    if (f.type === 'kardexItem') {
+      const code = String(v);
+      const it = kardexMap[code];
+      return <span>{it ? `${it.nameFa} — ${it.code}` : code}</span>;
+    }
+
+    if (f.type === 'date' || f.type === 'datetime') {
+      return <span dir="ltr" className="font-mono">{fmtDate(v)}</span>;
+    }
+
+    if (f.type === 'number') {
+      return <span dir="ltr" className="font-mono">{String(v)}</span>;
+    }
+
+    if (f.type === 'file') {
+      const href = String(v);
+      return (
+        <a className="text-blue-600 hover:underline" href={href} target="_blank">
+          مشاهده فایل
+        </a>
+      );
+    }
+
+    if (f.type === 'entryRef') {
+      return <span dir="ltr" className="font-mono">{String(v)}</span>;
+    }
+    if (f.type === 'entryRefMulti' && Array.isArray(v)) {
+      return <span className="font-mono" dir="ltr">{v.join(', ')}</span>;
+    }
+
+    if (f.type === 'checkbox') {
+      return <span>{v ? 'بله' : 'خیر'}</span>;
+    }
+
+    if (f.type === 'tableSelect') {
+      const code = String(v);
+      const it = tableselectMap[code];
+      return <span>{it ? `${it.title} — ${it.code}` : code}</span>;
+    }
+
+    return <span>{String(v)}</span>;
+  }
+
   return (
-    <div className="rounded-lg border border-gray-200 bg-white">
-      <div className="border-b border-gray-200 px-4 py-3 font-semibold text-gray-900">
-        توقفات و تعمیرات
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h1 className="text-xl font-bold">جزئیات فرم</h1>
+        <Link href="/confirmations" className="rounded-md border px-4 py-2 hover:bg-gray-50">
+          بازگشت
+        </Link>
       </div>
-      <div className="overflow-x-auto p-4">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-white">
-            <tr>
-              <th className="px-3 py-2 text-right text-sm font-medium text-gray-900">#</th>
-              <th className="px-3 py-2 text-right text-sm font-medium text-gray-900">شرح</th>
-              <th className="px-3 py-2 text-right text-sm font-medium text-gray-900">توقف توسط</th>
-              <th className="px-3 py-2 text-right text-sm font-medium text-gray-900">شروع</th>
-              <th className="px-3 py-2 text-right text-sm font-medium text-gray-900">پایان</th>
-              <th className="px-3 py-2 text-left  text-sm font-medium text-gray-900">مدت زمان</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100 bg-white">
-            {rows.map((r, idx) => (
-              <tr key={idx}>
-                <td className="px-3 py-2 whitespace-nowrap">{idx + 1}</td>
-                <td className="px-3 py-2">{r.pauseTitle}</td>
-                <td className="px-3 py-2">{r.cause ?? "—"}</td>
-                <td className="px-3 py-2 whitespace-nowrap">{formatTimeOnly(r.start)}</td>
-                <td className="px-3 py-2 whitespace-nowrap">{formatTimeOnly(r.end)}</td>
-                <td className="px-3 py-2 text-left font-medium">{minToHHMM(r.minutes)}</td>
-              </tr>
-            ))}
-            <tr>
-              <td className="px-3 py-2 font-semibold text-gray-900" colSpan={5}>
-                جمع مدت زمان
-              </td>
-              <td className="px-3 py-2 text-left font-semibold text-gray-900">
-                {minToHHMM(totalMin)}
-              </td>
-            </tr>
-          </tbody>
-        </table>
+
+      <div className="mb-4">
+        <h1 className="text-xl font-bold">{entry.form.titleFa}</h1>
+        <div className="text-sm text-gray-500 mt-1 flex gap-2">
+          <span>کد: {entry.form.code}</span>
+          <span>تاریخ: {fmtDate(entry.createdAt)}</span>
+          <span>وضعیت: {statusFa(entry.status)}</span>
+        </div>
+      </div>
+
+      <div className="rounded-xl border bg-white p-4">
+        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
+          {fields.map((f) => (
+            <div key={f.key} className="border-b pb-2">
+              <dt className="text-xs text-gray-500 mb-1">{f.labelFa ?? f.key}</dt>
+              <dd className="text-sm">{renderValue(f)}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+
+      {/* Sticky confirm action after reviewing the form */}
+      <div className="sticky bottom-0 bg-white/80 backdrop-blur border-t p-4 flex items-center justify-between">
+        <span className="text-sm text-gray-600">پس از بررسی اطلاعات، تایید کنید.</span>
+        <ConfirmAction entryId={id} />
       </div>
     </div>
   );

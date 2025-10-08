@@ -1,7 +1,7 @@
 // app/(protected)/reports/daily-production/components/FinalSummarySection.tsx
 import { prisma } from "@/lib/db";
 
-type Props = { date: string };
+type Props = { date: string; product?: string | number };
 
 /* ------------------ tiny utils ------------------ */
 function pick<T = any>(o: any, paths: string[], def?: any): T | undefined {
@@ -18,13 +18,19 @@ function num(x: any): number {
 function amountOf(v: any): number {
   return num(pick(v, ["amount", "qty", "مقدار", "تعداد"], 0));
 }
+function onlyDigits(s: any): string {
+  return String(s ?? "").replace(/[^\d]/g, "");
+}
 function codeFromAny(v: any): string {
   if (v == null) return "";
   if (typeof v === "object") {
     const raw = v.code ?? v.value ?? v.id ?? v.key ?? v.kardexCode ?? v.itemCode;
-    return raw ? String(raw) : "";
+    return raw ? onlyDigits(raw) : "";
   }
-  return String(v);
+  return onlyDigits(v);
+}
+function patternToRegex(p: string) {
+  return new RegExp("^" + p.replace(/\*/g, "\\d") + "$");
 }
 
 /* ----------- map form codes -> formIds, fetch entries by payload.date ----------- */
@@ -67,8 +73,49 @@ async function fetchKardexNames(codes: string[]) {
   return m;
 }
 
+/* ------------------ product-aware matchers ------------------ */
+function normalizeProduct(p?: string | number): "1" | "2" {
+  const s = String(p ?? "1").trim();
+  return s === "2" ? "2" : "1";
+}
+function isRowForProduct(payload: any, product: "1" | "2"): boolean {
+  const pv = pick<any>(payload, ["product", "payload.product"]);
+  if (pv === undefined || pv === null || pv === "") return true; // untagged -> include
+  return String(pv) === product;
+}
+
+// Corn
+function isCorn(code: string, product: "1" | "2"): boolean {
+  return product === "1" ? code === "1101000001" : code.startsWith("112");
+}
+
+// Spices
+const SPICE_PATTERNS = {
+  "1": [patternToRegex("13***1****")],
+  "2": [patternToRegex("13***2****")],
+} as const;
+function isSpice(code: string, product: "1" | "2"): boolean {
+  return SPICE_PATTERNS[product].some((re) => re.test(code));
+}
+
+// Oil
+function isOil(code: string): boolean {
+  return code.startsWith("1204");
+}
+
+// Product weight (from 1031007)
+function isProductWeight(code: string, product: "1" | "2"): boolean {
+  return product === "1" ? code.startsWith("41") : code.startsWith("42");
+}
+
+// Lime (from 1031007)
+function isLime(code: string): boolean {
+  return code === "1522000001" || code.startsWith("1522000001");
+}
+
 /* --------------------------------- Component ---------------------------------- */
-export default async function FinalSummarySection({ date }: Props) {
+export default async function FinalSummarySection({ date, product }: Props) {
+  const prod = normalizeProduct(product); // <- robust normalization
   const idsMap = await getFormIdsByCodes(["1031100", "1020600", "1031007"]);
   const rawsFormId = idsMap.get("1031100") ?? "";
   const remainFormId = idsMap.get("1020600") ?? "";
@@ -80,47 +127,51 @@ export default async function FinalSummarySection({ date }: Props) {
     getEntriesByDate(productFormId ? [productFormId] : [], date),
   ]);
 
-  // --- totals ---
-  let cornConsumedKg = 0;            // 1101000001
-  let spicesConsumedKgTotal = 0;     // startsWith 13
-  let oilConsumedCans = 0;           // startsWith 1204
+  // --- totals (filtered by product when payload.product exists) ---
+  let cornConsumedKg = 0;
+  let spicesConsumedKgTotal = 0;
+  let oilConsumedCans = 0;
   const spicesByCode = new Map<string, number>();
 
   for (const e of raws) {
     const v = (e.payload ?? {}) as any;
+    if (!isRowForProduct(v, prod)) continue;
+
     const code = codeFromAny(v.raw_material ?? v.rawMaterial ?? v.material ?? v.code);
     const amt = amountOf(v);
     if (!code || !amt) continue;
 
-    if (code === "1101000001") cornConsumedKg += amt;
-    if (code.startsWith("13")) {
+    if (isCorn(code, prod)) cornConsumedKg += amt;
+    if (isSpice(code, prod)) {
       spicesConsumedKgTotal += amt;
       spicesByCode.set(code, (spicesByCode.get(code) ?? 0) + amt);
     }
-    if (code.startsWith("1204")) oilConsumedCans += amt;
+    if (isOil(code)) oilConsumedCans += amt;
   }
 
   // remained corn from 1020600: payload.remaining_corn
   let remainedCornKg = 0;
   for (const e of remains) {
     const v = (e.payload ?? {}) as any;
+    if (!isRowForProduct(v, prod)) continue;
     remainedCornKg += num(
       pick(v, ["remaining_corn", "remainingCorn", "corn_remaining", "remained_corn"], 0)
     );
   }
 
-  // product weight from 1031007: raw_material startsWith 41
-  // lime from 1031007: raw_material startsWith 1522000001 (or equals)
+  // product weight & lime from 1031007 (product-aware)
   let productWeightKg = 0;
   let limeConsumedKg = 0;
   for (const e of products) {
     const v = (e.payload ?? {}) as any;
+    if (!isRowForProduct(v, prod)) continue;
+
     const code = codeFromAny(v.raw_material ?? v.rawMaterial ?? v.material ?? v.code);
     const amt = amountOf(v);
     if (!code || !amt) continue;
 
-    if (code.startsWith("41")) productWeightKg += amt;
-    if (code === "1522000001" || code.startsWith("1522000001")) limeConsumedKg += amt;
+    if (isProductWeight(code, prod)) productWeightKg += amt;
+    if (isLime(code)) limeConsumedKg += amt;
   }
 
   // percentages
@@ -140,10 +191,14 @@ export default async function FinalSummarySection({ date }: Props) {
     })
     .sort((a, b) => a.label.localeCompare(b.label, "fa"));
 
+  const productLabel = prod === "1" ? "چیپس" : "پاپکورن";
+
   // render
   return (
     <div className="rounded-lg border border-gray-200 bg-white">
-      <div className="border-b border-gray-200 px-4 py-3 font-semibold text-gray-900">جمع بندی</div>
+      <div className="border-b border-gray-200 px-4 py-3 font-semibold text-gray-900">
+        جمع بندی – {productLabel}
+      </div>
 
       <div className="p-4 space-y-6">
         {/* Summary table */}
@@ -215,7 +270,9 @@ export default async function FinalSummarySection({ date }: Props) {
                   <tr key={s.code}>
                     <td className="px-3 py-2">{s.label}</td>
                     <td className="px-3 py-2 text-left">{s.kg.toLocaleString("fa-IR")}</td>
-                    <td className="px-3 py-2 text-left">{productWeightKg > 0 ? `${s.pct.toFixed(2)}٪` : "—"}</td>
+                    <td className="px-3 py-2 text-left">
+                      {productWeightKg > 0 ? `${s.pct.toFixed(2)}٪` : "—"}
+                    </td>
                   </tr>
                 ))
               )}

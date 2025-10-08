@@ -3,7 +3,8 @@ import { prisma } from "@/lib/db";
 import { headers, cookies } from "next/headers";
 import { unstable_noStore as noStore } from "next/cache";
 
-type Props = { date: string };
+type ProductKey = "1" | "2";
+type Props = { date: string; product: ProductKey };
 
 /* -------------------- tiny utils -------------------- */
 function pick<T = any>(o: any, keys: string[], def?: any): T | undefined {
@@ -12,6 +13,20 @@ function pick<T = any>(o: any, keys: string[], def?: any): T | undefined {
     if (val !== undefined && val !== null && val !== "") return val as T;
   }
   return def;
+}
+function faToEnDigits(s: any): string {
+  const str = String(s ?? "");
+  const map: Record<string, string> = {
+    "۰":"0","۱":"1","۲":"2","۳":"3","۴":"4","۵":"5","۶":"6","۷":"7","۸":"8","۹":"9",
+    "٠":"0","١":"1","٢":"2","٣":"3","٤":"4","٥":"5","٦":"6","٧":"7","٨":"8","٩":"9",
+  };
+  return str.replace(/[0-9۰-۹٠-٩]/g, (ch) => map[ch] ?? ch);
+}
+function onlyDigits(input: any): string | undefined {
+  if (input == null) return undefined;
+  const s = faToEnDigits(String(input));
+  const d = s.replace(/[^\d]/g, "");
+  return d || undefined;
 }
 function num(x: any): number { const n = Number(x); return Number.isFinite(n) ? n : 0; }
 function entryDateStr(obj: any): string | undefined {
@@ -99,7 +114,7 @@ async function getWasteEntriesByDate(date: string, formCodes: string[]) {
 async function fetchFixedTitles(codes: string[]): Promise<Map<string, string>> {
   noStore();
   const map = new Map<string, string>();
-  const uniq = Array.from(new Set(codes.filter(Boolean).map(String))).slice(0, 500);
+  const uniq = Array.from(new Set(codes.filter(Boolean).map(c => onlyDigits(c) ?? "").filter(Boolean))).slice(0, 500);
   if (uniq.length === 0) return map;
 
   const h = await headers();
@@ -109,7 +124,6 @@ async function fetchFixedTitles(codes: string[]): Promise<Map<string, string>> {
   const base = process.env.NEXT_PUBLIC_APP_URL || (host ? `${proto}://${host}` : "");
   const cookieHeader = ck.getAll().map(c => `${c.name}=${c.value}`).join("; ");
 
-  // Primary: CSV in one `codes`
   const params = new URLSearchParams();
   params.set("codes", uniq.join(","));
   const url = `${base}/api/lookups/fixed?${params.toString()}`;
@@ -122,11 +136,10 @@ async function fetchFixedTitles(codes: string[]): Promise<Map<string, string>> {
     });
     const items: any[] = r.ok ? (await r.json().catch(() => null))?.items ?? [] : [];
     for (const it of items) {
-      const code = String(it?.code ?? "");
+      const code = onlyDigits(it?.code) ?? "";
       const title = it?.title ?? it?.titleFa ?? it?.nameFa ?? it?.name ?? it?.label ?? "";
       if (code) map.set(code, title ? String(title) : code);
     }
-    // Fallback per-code for any misses
     const missing = uniq.filter(c => !map.has(c));
     if (missing.length) {
       await Promise.allSettled(missing.map(async (c) => {
@@ -139,7 +152,7 @@ async function fetchFixedTitles(codes: string[]): Promise<Map<string, string>> {
         });
         if (!rr.ok) { map.set(c, c); return; }
         const jj = await rr.json().catch(() => null);
-        const it1 = Array.isArray(jj?.items) ? jj.items.find((x: any) => String(x?.code) === c) : null;
+        const it1 = Array.isArray(jj?.items) ? jj.items.find((x: any) => onlyDigits(x?.code) === c) : null;
         const t1 = it1?.title ?? it1?.titleFa ?? it1?.nameFa ?? it1?.name ?? it1?.label ?? "";
         map.set(c, t1 ? String(t1) : c);
       }));
@@ -150,9 +163,21 @@ async function fetchFixedTitles(codes: string[]): Promise<Map<string, string>> {
   return map;
 }
 
+/* -------------------- allowed waste codes per product -------------------- */
+const WASTE_CODES_BY_PRODUCT: Record<ProductKey, string[]> = {
+  "1": ["5203280100", "5203290100", "5103420000", "5102030100", "5101020100"], // چیپس
+  "2": ["5102000000", "5101000200"],                                         // پاپکورن
+};
+function isAllowedWasteForProduct(code: string | undefined, product: ProductKey): boolean {
+  if (!code) return false;
+  const d = onlyDigits(code);
+  if (!d) return false;
+  return WASTE_CODES_BY_PRODUCT[product].includes(d);
+}
+
 /* -------------------- Component (pivot) -------------------- */
-export default async function WasteDetailsSection({ date }: Props) {
-  // 1) fetch entries (forms 1020508 + 1020400)
+export default async function WasteDetailsSection({ date, product }: Props) {
+  // 1) fetch entries (forms 1020508 + 1020400) by payload.date
   const entries = await getWasteEntriesByDate(date, ["1020508", "1020400"]);
 
   // 2) collect waste codes + amounts by shift
@@ -163,20 +188,28 @@ export default async function WasteDetailsSection({ date }: Props) {
   for (const e of entries) {
     const v = (e.payload ?? {}) as any;
     const wasteTS = resolveTableSelect(v, "waste");
-    const wasteCode =
+    const rawCode =
       wasteTS.code ??
       pick<string>(v, ["code", "kardexCode", "itemCode", "کد", "کد_کاردکس"]);
+    const code = onlyDigits(rawCode);
     const amount = wasteAmount(v);
-    if (!wasteCode || !amount) continue;
+    if (!code || !amount) continue;
+
+    // Optional guard: if payload.product exists and is different, skip
+    const pval = String(pick<any>(v, ["product", "payload.product"], "") ?? "");
+    if (pval && pval !== product) continue;
+
+    // ✅ product-specific code whitelist
+    if (!isAllowedWasteForProduct(code, product)) continue;
 
     const sh = payloadShift(v); // 1/2/3 (others ignored for columns but counted in sum)
     wires.push({
-      wasteCode: String(wasteCode),
+      wasteCode: code,
       wasteLabelFromPayload: wasteTS.label ?? payloadLabelFallback(v),
       shift: sh,
       amount,
     });
-    codes.add(String(wasteCode));
+    codes.add(code);
   }
 
   if (wires.length === 0) {
@@ -204,7 +237,6 @@ export default async function WasteDetailsSection({ date }: Props) {
     if (w.shift === 1) row.s1 += w.amount;
     else if (w.shift === 2) row.s2 += w.amount;
     else if (w.shift === 3) row.s3 += w.amount;
-    // even if shift is not 1-3, include in sum only
     row.sum += w.amount;
 
     pivot.set(title, row);

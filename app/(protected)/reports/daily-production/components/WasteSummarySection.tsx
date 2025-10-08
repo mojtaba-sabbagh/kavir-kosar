@@ -3,7 +3,8 @@ import { prisma } from "@/lib/db";
 import { headers, cookies } from "next/headers";
 import { unstable_noStore as noStore } from "next/cache";
 
-type Props = { date: string };
+type ProductKey = "1" | "2";
+type Props = { date: string; product: ProductKey };
 
 /* -------------------- tiny utils -------------------- */
 function pick<T = any>(o: any, keys: string[], def?: any): T | undefined {
@@ -14,15 +15,27 @@ function pick<T = any>(o: any, keys: string[], def?: any): T | undefined {
   return def;
 }
 function num(x: any): number { const n = Number(x); return Number.isFinite(n) ? n : 0; }
+function faToEnDigits(s: any): string {
+  const str = String(s ?? "");
+  const map: Record<string, string> = {
+    "۰":"0","۱":"1","۲":"2","۳":"3","۴":"4","۵":"5","۶":"6","۷":"7","۸":"8","۹":"9",
+    "٠":"0","١":"1","٢":"2","٣":"3","٤":"4","٥":"5","٦":"6","٧":"7","٨":"8","٩":"9",
+  };
+  return str.replace(/[0-9۰-۹٠-٩]/g, (ch) => map[ch] ?? ch);
+}
+function onlyDigits(v: any): string {
+  return faToEnDigits(String(v ?? "")).replace(/[^\d]/g, "");
+}
 function codeFromAny(v: any): string {
   if (v == null) return "";
   if (typeof v === "object") {
     const raw = v.code ?? v.value ?? v.id ?? v.key ?? v.kardexCode ?? v.itemCode;
-    return raw ? String(raw) : "";
+    return onlyDigits(raw);
   }
-  return String(v);
+  return onlyDigits(v);
 }
 function amountOf(obj: any): number { return num(pick(obj, ["amount", "qty", "مقدار", "تعداد"], 0)); }
+function patternToRegex(p: string) { return new RegExp("^" + p.replace(/\*/g, "\\d") + "$"); }
 
 /* -------------------- form code → id -------------------- */
 async function getFormIdsByCodes(formCodes: string[]): Promise<string[]> {
@@ -53,7 +66,7 @@ async function getFormEntries(date: string, formCodes: string[]) {
 async function fetchFixedTitles(codes: string[]): Promise<Map<string, string>> {
   noStore();
   const map = new Map<string, string>();
-  const uniq = Array.from(new Set(codes.filter(Boolean).map(String))).slice(0, 200);
+  const uniq = Array.from(new Set(codes.filter(Boolean).map(onlyDigits))).filter(Boolean).slice(0, 200);
   if (uniq.length === 0) return map;
 
   const h = await headers();
@@ -75,8 +88,7 @@ async function fetchFixedTitles(codes: string[]): Promise<Map<string, string>> {
     });
     const items: any[] = r.ok ? (await r.json().catch(() => null))?.items ?? [] : [];
     for (const it of items) {
-      const c = String(it?.code ?? "");
-      // Prefer the exact `title` field, then common fallbacks.
+      const c = onlyDigits(it?.code);
       const t = it?.title ?? it?.titleFa ?? it?.nameFa ?? it?.name ?? it?.label ?? "";
       if (c) map.set(c, t ? String(t) : c);
     }
@@ -89,7 +101,7 @@ async function fetchFixedTitles(codes: string[]): Promise<Map<string, string>> {
           const u = `${base}/api/lookups/fixed?${p.toString()}`;
           const rr = await fetch(u, { headers: { cookie: cookieHeader, accept: "application/json" }, cache: "no-store", next: { revalidate: 0 } });
           const jj = rr.ok ? (await rr.json().catch(() => null)) : null;
-          const it1 = Array.isArray(jj?.items) ? jj.items.find((x: any) => String(x?.code) === c) : null;
+          const it1 = Array.isArray(jj?.items) ? jj.items.find((x: any) => onlyDigits(x?.code) === c) : null;
           const t1 = it1?.title ?? it1?.titleFa ?? it1?.nameFa ?? it1?.name ?? it1?.label ?? "";
           map.set(c, t1 ? String(t1) : c);
         })
@@ -101,42 +113,75 @@ async function fetchFixedTitles(codes: string[]): Promise<Map<string, string>> {
   return map;
 }
 
-/* -------------------- rules (wasteCode + rawSelector) -------------------- */
-const RULES = [
-  { wasteCode: "5203280100", rawSelector: (c: string) => c === "1101000001" }, // درصد ضایعات برگه
-  { wasteCode: "5203290100", rawSelector: (c: string) => c === "1101000001" }, // درصد ضایعات خمیر
-  { wasteCode: "5103420000", rawSelector: (c: string) => c === "1101000001" }, // درصد ضایعات زیرماردن
-  { wasteCode: "5102030100", rawSelector: (c: string) => c.startsWith("22") }, // درصد ضایعات سلفون
-  { wasteCode: "5101020100", rawSelector: (c: string) => c.startsWith("21") }, // درصد ضایعات کارتن
-] as const;
+/* -------------------- per-product rules -------------------- */
+type Rule = { wasteCode: string; rawEquals?: string; rawPatterns?: string[] };
 
-export default async function WasteSummarySection({ date }: Props) {
+const RULES_BY_PRODUCT: Record<ProductKey, Rule[]> = {
+  // چیپس
+  "1": [
+    { wasteCode: "5203280100", rawEquals: "1101000001" }, // درصد ضایعات برگه
+    { wasteCode: "5203290100", rawEquals: "1101000001" }, // درصد ضایعات خمیر
+    { wasteCode: "5103420000", rawEquals: "1101000001" }, // درصد ضایعات زیرماردن
+    { wasteCode: "5102030100", rawPatterns: ["22***1****"] }, // سلفون (سری 1)
+    { wasteCode: "5101020100", rawPatterns: ["21***1****"] }, // کارتن (سری 1)
+  ],
+  // پاپکورن (طبق دستور شما برای خلاصه)
+  "2": [
+    { wasteCode: "5102030100", rawPatterns: ["22***2****"] }, // سلفون (سری 2)
+    { wasteCode: "5101020100", rawPatterns: ["21***2****"] }, // کارتن (سری 2)
+  ],
+};
+
+function makeRawSelector(r: Rule): (c: string) => boolean {
+  if (r.rawEquals) {
+    const eq = onlyDigits(r.rawEquals);
+    return (c) => onlyDigits(c) === eq;
+  }
+  if (r.rawPatterns?.length) {
+    const regs = r.rawPatterns.map(patternToRegex);
+    return (c) => regs.some((re) => re.test(onlyDigits(c)));
+  }
+  return () => false;
+}
+
+export default async function WasteSummarySection({ date, product }: Props) {
+  const RULES = RULES_BY_PRODUCT[product];
+
   // 1) fetch waste + raw entries by payload date
   const wasteEntries = await getFormEntries(date, ["1020508", "1020400"]);
   const rawEntries   = await getFormEntries(date, ["1031100"]);
 
-  // 2) aggregate by code
+  // 2) aggregate by code (respect product when present in payload)
   const wasteByCode = new Map<string, number>();
   for (const e of wasteEntries) {
     const v = (e.payload ?? {}) as any;
-    const code =
-      codeFromAny(v?.waste) ||
-      pick<string>(v, ["code", "kardexCode", "itemCode", "کد", "کد_کاردکس"]) ||
-      "";
+    const pval = String(pick<any>(v, ["product", "payload.product"], "") ?? "");
+    if (pval && pval !== product) continue; // if payload.product is set, enforce it
+
+    const code = codeFromAny(v?.waste) || codeFromAny(
+      pick<string>(v, ["code", "kardexCode", "itemCode", "کد", "کد_کاردکس"])
+    );
     const amt = amountOf(v);
     if (!code || !amt) continue;
+
+    // only count waste codes that exist in current product's RULES
+    if (!RULES.some((r) => onlyDigits(r.wasteCode) === code)) continue;
+
     wasteByCode.set(code, (wasteByCode.get(code) ?? 0) + amt);
   }
 
   const rawByCode = new Map<string, number>();
   for (const e of rawEntries) {
     const v = (e.payload ?? {}) as any;
+    const pval = String(pick<any>(v, ["product", "payload.product"], "") ?? "");
+    if (pval && pval !== product) continue; // enforce selected product if provided
+
     const code =
       codeFromAny(v?.raw_material) ||
-      pick<string>(v, ["rawMaterial", "raw_material", "code", "kardexCode", "itemCode"]) ||
-      "";
+      codeFromAny(pick<string>(v, ["rawMaterial", "raw_material", "code", "kardexCode", "itemCode"]));
     const amt = amountOf(v);
     if (!code || !amt) continue;
+
     rawByCode.set(code, (rawByCode.get(code) ?? 0) + amt);
   }
 
@@ -145,13 +190,14 @@ export default async function WasteSummarySection({ date }: Props) {
 
   // 4) compute rows
   const rows = RULES.map((r) => {
-    const labelFromFI = labelMap.get(r.wasteCode); // ← title from FixedInformation
-    const labelFa = labelFromFI || r.wasteCode;    // fallback to code if not found
+    const wasteKey = onlyDigits(r.wasteCode);
+    const labelFa = labelMap.get(wasteKey) || r.wasteCode;
 
-    const wasteSum = wasteByCode.get(r.wasteCode) ?? 0;
+    const wasteSum = wasteByCode.get(wasteKey) ?? 0;
 
+    const selector = makeRawSelector(r);
     let rawSum = 0;
-    for (const [c, a] of rawByCode.entries()) if (r.rawSelector(c)) rawSum += a;
+    for (const [c, a] of rawByCode.entries()) if (selector(c)) rawSum += a;
 
     const pct = rawSum > 0 ? (wasteSum / rawSum) * 100 : 0;
 

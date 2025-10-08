@@ -3,7 +3,8 @@ import { prisma } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
-type Props = { date: string };
+type ProductKey = "1" | "2";
+type Props = { date: string; product: ProductKey };
 
 /* helpers */
 function faToEnDigits(s: any): string {
@@ -51,6 +52,12 @@ function toJalali(isoDate: string, latn = false): string {
   } catch { return isoDate; }
 }
 
+/* product-series filter */
+function matchesSelectedSeries(code: string, product: ProductKey): boolean {
+  // چیپس: 41*  |  پاپکورن: 42*
+  return product === "1" ? code.startsWith("41") : code.startsWith("42");
+}
+
 type Agg = {
   code: string;
   nameFa?: string | null;
@@ -59,7 +66,7 @@ type Agg = {
   totalWeight: number;
 };
 
-export default async function ProductsSummarySection({ date }: Props) {
+export default async function ProductsSummarySection({ date, product }: Props) {
   const entries = await prisma.formEntry.findMany({
     where: {
       form: { code: "1031007" },
@@ -124,6 +131,9 @@ export default async function ProductsSummarySection({ date }: Props) {
 
     const items = extractProducts(p);
     for (const it of items) {
+      // ✅ filter by selected product series
+      if (!matchesSelectedSeries(it.code, product)) continue;
+
       const a = getAgg(it.code);
       a.shifts[s] += it.amount;
       a.totalAmount += it.amount;
@@ -149,7 +159,9 @@ export default async function ProductsSummarySection({ date }: Props) {
     }
   }
 
-  const rows = [...byCode.values()].sort((x, y) => (x.nameFa || "").localeCompare(y.nameFa || "", "fa"));
+  const rows = [...byCode.values()].sort((x, y) =>
+    (x.nameFa || "").localeCompare(y.nameFa || "", "fa")
+  );
   const nf = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 3 });
   const hasAny = rows.length > 0;
 

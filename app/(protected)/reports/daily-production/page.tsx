@@ -13,22 +13,25 @@ import FinalSummarySection from "./components/FinalSummarySection";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type Search = { date?: string; hours?: string };
+type Search = { date?: string; hours?: string; product?: string };
 
 export default async function DailyProductionPage({ searchParams }: { searchParams: Promise<Search> }) {
   const sp = await searchParams;
   const date = (sp.date ?? "").trim();
   const hours = Math.max(1, Number(sp.hours ?? "") || 24);
+  const product = (sp.product ?? "1").trim(); // "1" (chips) | "2" (popcorn)
   const show = !!date;
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6" dir="rtl">
       <h1 className="text-2xl md:text-3xl font-bold mb-4">گزارش تولید روزانه</h1>
+
+      {/* Keep your existing filter form; if it gets product later, pass it as initialProduct */}
       <ReportFilterForm initialDate={date || undefined} initialHours={hours} />
 
       {show ? (
         <>
-          {/* Raw materials panel */}
+          {/* Raw materials */}
           <CollapsiblePanelAdvanced
             title="مواد اولیه"
             variant="accent"
@@ -44,12 +47,12 @@ export default async function DailyProductionPage({ searchParams }: { searchPara
             }
           >
             <div className="space-y-8">
-              <RawMaterialsDetailsSection date={date} />
-              <RawMaterialsSection date={date} hours={hours} />
+              <RawMaterialsDetailsSection date={date} product={product} />
+              <RawMaterialsSection date={date} hours={hours} product={product} />
             </div>
           </CollapsiblePanelAdvanced>
 
-          {/* Production panel */}
+          {/* Production */}
           <CollapsiblePanelAdvanced
             title="تولید"
             variant="accent"
@@ -65,12 +68,12 @@ export default async function DailyProductionPage({ searchParams }: { searchPara
             }
           >
             <div className="space-y-8">
-              <ProductsDetailsSection date={date} />
-              <ProductsSummarySection date={date} />
+              <ProductsDetailsSection date={date} product={product} />
+              <ProductsSummarySection date={date} product={product} />
             </div>
           </CollapsiblePanelAdvanced>
 
-          {/* Waste panel */}
+          {/* Waste */}
           <CollapsiblePanelAdvanced
             title="ضایعات"
             variant="accent"
@@ -86,12 +89,12 @@ export default async function DailyProductionPage({ searchParams }: { searchPara
             }
           >
             <div className="space-y-8">
-              <WasteDetailsSection date={date} />
-              <WasteSummarySection date={date} />
+              <WasteDetailsSection date={date} product={product} />
+              <WasteSummarySection date={date} product={product} />
             </div>
           </CollapsiblePanelAdvanced>
 
-          {/* Pause panel */}
+          {/* Pause */}
           <CollapsiblePanelAdvanced
             title="توقفات و تعمیرات"
             variant="accent"
@@ -106,8 +109,10 @@ export default async function DailyProductionPage({ searchParams }: { searchPara
               </svg>
             }
           >
-            <PauseDetailsSection date={date} />
+            <PauseDetailsSection date={date} product={product} />
           </CollapsiblePanelAdvanced>
+
+          {/* Final summary (both products) */}
           <CollapsiblePanelAdvanced
             title="جمع بندی"
             variant="accent"
@@ -122,7 +127,7 @@ export default async function DailyProductionPage({ searchParams }: { searchPara
               </svg>
             }
           >
-            <FinalSummarySection date={date} />
+            <FinalSummarySection date={date} product={product} />
           </CollapsiblePanelAdvanced>
         </>
       ) : (

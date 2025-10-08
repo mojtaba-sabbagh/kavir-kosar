@@ -3,7 +3,8 @@ import { prisma } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
-type Props = { date: string };
+type ProductKey = "1" | "2";
+type Props = { date: string; product: ProductKey };
 
 /* ---------- helpers ---------- */
 function faToEnDigits(s: any): string {
@@ -97,6 +98,12 @@ function extractProducts(p: any): { code: string; amount: number }[] {
   return out;
 }
 
+/* ---------- product-series filter ---------- */
+function matchesSelectedSeries(code: string, product: ProductKey): boolean {
+  // چیپس: codes start with 41  |  پاپکورن: codes start with 42
+  return product === "1" ? code.startsWith("41") : code.startsWith("42");
+}
+
 /* ---------- types ---------- */
 type Row = {
   dateFa: string;            // Jalali of payload.date
@@ -110,7 +117,7 @@ type Row = {
   note?: string | null;
 };
 
-export default async function ProductsDetailsSection({ date }: Props) {
+export default async function ProductsDetailsSection({ date, product }: Props) {
   // fetch entries for the day, finalConfirmed
   const entries = await prisma.formEntry.findMany({
     where: {
@@ -140,6 +147,9 @@ export default async function ProductsDetailsSection({ date }: Props) {
 
     const prods = extractProducts(p);
     for (const it of prods) {
+      // ✅ filter by selected product series
+      if (!matchesSelectedSeries(it.code, product)) continue;
+
       codes.add(it.code);
       rows.push({
         dateFa,
@@ -215,7 +225,8 @@ export default async function ProductsDetailsSection({ date }: Props) {
             <div key={g.code} className="border rounded-lg">
               <div className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-t-lg">
                 <div className="font-semibold">
-                  {g.nameFa || "بدون نام"} <span className="text-xs text-gray-500" dir="ltr">({g.code})</span>
+                  {g.nameFa || "بدون نام"}{" "}
+                  <span className="text-xs text-gray-500" dir="ltr">({g.code})</span>
                 </div>
                 <div className="text-sm">
                   جمع تعداد: <span className="font-bold">{nf(g.totalAmount)}</span>

@@ -3,7 +3,8 @@ import { prisma } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
-type Props = { date: string };
+type ProductKey = "1" | "2";
+type Props = { date: string; product: ProductKey };
 
 /* -------------------- helpers -------------------- */
 function faToEnDigits(s: any): string {
@@ -55,27 +56,45 @@ function normalizeIsoDateLike(input: unknown): string | null {
   const pad = (n: string) => n.padStart(2, "0");
   return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
 }
+function patternToRegex(p: string) {
+  // per your spec: '*' matches a single digit
+  return new RegExp("^" + p.replace(/\*/g, "\\d") + "$");
+}
 
-/* -------------------- group definitions -------------------- */
-const RAW_MATERIAL_GROUPS = [
-  { key: "corn",   labelFa: "ذرت",   prefixes: ["110"] },
-  { key: "oil",    labelFa: "روغن",  prefixes: ["1204"] },
-  { key: "lime",   labelFa: "آهک",   prefixes: ["1522"] },
-  { key: "spice",  labelFa: "ادویه", prefixes: ["13"] },
-  { key: "selfon", labelFa: "سلفون", prefixes: ["22"] },
-  { key: "box",    labelFa: "کارتن", prefixes: ["2100"] },
-] as const;
-type GroupKey = typeof RAW_MATERIAL_GROUPS[number]["key"];
+/* -------------------- group definitions (per product) -------------------- */
+type GroupKey = "corn" | "oil" | "lime" | "spice" | "selfon" | "box";
 
-function matchGroupByCode(code?: string): GroupKey | undefined {
+const RAW_MATERIAL_GROUPS_BY_PRODUCT: Record<
+  ProductKey,
+  Array<{ key: GroupKey; labelFa: string; prefixes?: string[]; patterns?: string[] }>
+> = {
+  "1": [
+    { key: "corn",   labelFa: "ذرت",           prefixes: ["110"] },
+    { key: "oil",    labelFa: "روغن",          prefixes: ["1204"] },
+    { key: "lime",   labelFa: "آهک",           prefixes: ["1522"] },
+    { key: "spice",  labelFa: "ادویه",         patterns: ["13***1****"] },
+    { key: "selfon", labelFa: "سلفون",         patterns: ["22***1****"] },
+    { key: "box",    labelFa: "کارتن",         patterns: ["21***1****"] },
+  ],
+  "2": [
+    { key: "corn",   labelFa: "ذرت پاپکورن",   prefixes: ["112"] },
+    { key: "oil",    labelFa: "روغن",          prefixes: ["1204"] },
+    { key: "lime",   labelFa: "آهک",           prefixes: ["1522"] },
+    { key: "spice",  labelFa: "ادویه",         patterns: ["13***2****"] },
+    { key: "selfon", labelFa: "سلفون",         patterns: ["22***2****"] },
+    { key: "box",    labelFa: "کارتن",         patterns: ["21***2****"] },
+  ],
+};
+
+function matchGroupByCode(code: string | undefined, product: ProductKey): GroupKey | undefined {
   const s = cleanCode(code);
   if (!s) return;
-  if (s.startsWith("11"))   return "corn";
-  if (s.startsWith("1204")) return "oil";
-  if (s.startsWith("1522")) return "lime";
-  if (s.startsWith("13"))   return "spice";
-  if (s.startsWith("22"))   return "selfon";
-  if (s.startsWith("2100")) return "box";
+  const defs = RAW_MATERIAL_GROUPS_BY_PRODUCT[product];
+  for (const g of defs) {
+    const okPrefix = g.prefixes?.some((p) => s.startsWith(p));
+    const okPattern = g.patterns?.some((p) => patternToRegex(p).test(s));
+    if (okPrefix || okPattern) return g.key;
+  }
   return;
 }
 
@@ -92,24 +111,25 @@ type TxnRow = {
 };
 
 /* -------------------- component -------------------- */
-export default async function RawMaterialsDetailsSection({ date }: Props) {
-  // DB: only finalConfirmed & payload.date exact match
+export default async function RawMaterialsDetailsSection({ date, product }: Props) {
+  // DB: only finalConfirmed & payload.date + product exact match
   const entries = await prisma.formEntry.findMany({
     where: {
       form: { code: "1031100" },
       status: "finalConfirmed",
-        AND: [
-            { payload: { path: ['date'],    equals: date } },   
-            { payload: { path: ['product'], equals: '1'  } },
-            ],    
-        },
+      AND: [
+        { payload: { path: ["date"], equals: date } },
+        { payload: { path: ["product"], equals: product } },
+      ],
+    },
     select: { id: true, payload: true, finalConfirmedAt: true, createdAt: true },
     orderBy: { finalConfirmedAt: "asc" },
   });
 
-  // Prepare group buckets
+  // Prepare group buckets for the selected product
+  const defs = RAW_MATERIAL_GROUPS_BY_PRODUCT[product];
   const groups = new Map<GroupKey, { labelFa: string; total: number; rows: TxnRow[] }>();
-  for (const g of RAW_MATERIAL_GROUPS) groups.set(g.key, { labelFa: g.labelFa, total: 0, rows: [] });
+  for (const g of defs) groups.set(g.key, { labelFa: g.labelFa, total: 0, rows: [] });
 
   // Collect lookups
   const matCodes = new Set<string>();
@@ -122,7 +142,7 @@ export default async function RawMaterialsDetailsSection({ date }: Props) {
     const amount = parseAmount(p?.amount ?? p?.qty ?? p?.quantity ?? p?.value ?? p?.count);
     if (!code || !Number.isFinite(amount) || amount === 0) continue;
 
-    const key = matchGroupByCode(code);
+    const key = matchGroupByCode(code, product);
     if (!key) continue;
 
     const payloadDate = normalizeIsoDateLike(p?.date) || date; // fallback to requested date
@@ -173,8 +193,8 @@ export default async function RawMaterialsDetailsSection({ date }: Props) {
     }
   }
 
-  // Keep only materials that have at least one row
-  const present = RAW_MATERIAL_GROUPS
+  // Keep only materials that have at least one row — and keep original order
+  const present = defs
     .map(({ key, labelFa }) => {
       const bucket = groups.get(key)!;
       return { key, labelFa, rows: bucket.rows, total: bucket.total };
@@ -185,7 +205,9 @@ export default async function RawMaterialsDetailsSection({ date }: Props) {
 
   return (
     <section className="w-full">
-      <h2 className="text-xl font-bold mb-3">جزئیات تراکنش مواد اولیه – {toJalali(date)}</h2>
+      <h2 className="text-xl font-bold mb-3">
+        جزئیات تراکنش مواد اولیه – {toJalali(date)}
+      </h2>
 
       {present.length === 0 ? (
         <div className="text-sm text-gray-600 border rounded-lg p-3">
@@ -207,7 +229,7 @@ export default async function RawMaterialsDetailsSection({ date }: Props) {
                   <thead>
                     <tr className="bg-white">
                       <th className="px-3 py-2">#</th>
-                      <th className="px-3 py-2">تاریخ</th>           
+                      <th className="px-3 py-2">تاریخ</th>
                       <th className="px-3 py-2">شیفت</th>
                       <th className="px-3 py-2">کد ماذه اولیه</th>
                       <th className="px-3 py-2">نام ماده اولیه</th>
@@ -244,4 +266,3 @@ export default async function RawMaterialsDetailsSection({ date }: Props) {
     </section>
   );
 }
-// app/(protected)/reports/daily-production/components/ProductsSummarySection.tsx

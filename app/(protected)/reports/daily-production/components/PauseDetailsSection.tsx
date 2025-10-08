@@ -3,7 +3,8 @@ import { prisma } from "@/lib/db";
 import { headers, cookies } from "next/headers";
 import { unstable_noStore as noStore } from "next/cache";
 
-type Props = { date: string };
+type ProductKey = "1" | "2";
+type Props = { date: string; product: ProductKey };
 
 /* ----------------- tiny utils ----------------- */
 function pick<T = any>(o: any, keys: string[], def?: any): T | undefined {
@@ -106,16 +107,35 @@ function parseConfig(cfg: unknown): any {
   return cfg as any;
 }
 
-/* -------------------- entries by payload.date only -------------------- */
-async function getPauseEntriesByDate(formId: string, date: string) {
+/* -------------------- entries by payload.date AND product line -------------------- */
+async function getPauseEntriesByDateAndProduct(formId: string, date: string, product: ProductKey) {
+  // line may be stored as string "1"/"2" OR number 1/2; also there may be legacy keys
+  const lineFilters = [
+    { payload: { path: ["line"], equals: product } },
+    { payload: { path: ["line"], equals: Number(product) } },
+    { payload: { path: ["lineNo"], equals: product } },
+    { payload: { path: ["lineNo"], equals: Number(product) } },
+    { payload: { path: ["line_no"], equals: product } },
+    { payload: { path: ["line_no"], equals: Number(product) } },
+    { payload: { path: ["productionLine"], equals: product } },
+    { payload: { path: ["productionLine"], equals: Number(product) } },
+    { payload: { path: ["payload", "line"], equals: product } },
+    { payload: { path: ["payload", "line"], equals: Number(product) } },
+  ];
+
   return prisma.formEntry.findMany({
     where: {
       formId,
-      OR: [
-        { payload: { path: ["date"], equals: date } },
-        { payload: { path: ["payloadDate"], equals: date } },
-        { payload: { path: ["tarikh"], equals: date } },
-        { payload: { path: ["payload", "date"], equals: date } },
+      AND: [
+        {
+          OR: [
+            { payload: { path: ["date"], equals: date } },
+            { payload: { path: ["payloadDate"], equals: date } },
+            { payload: { path: ["tarikh"], equals: date } },
+            { payload: { path: ["payload", "date"], equals: date } },
+          ],
+        },
+        { OR: lineFilters },
       ],
     },
     select: { id: true, payload: true },
@@ -123,7 +143,7 @@ async function getPauseEntriesByDate(formId: string, date: string) {
   });
 }
 
-export default async function PauseDetailsSection({ date }: Props) {
+export default async function PauseDetailsSection({ date, product }: Props) {
   // 1) load form and its fields (to map select values -> labels)
   const form = await getForm102500WithFields();
   if (!form?.id) {
@@ -177,8 +197,8 @@ export default async function PauseDetailsSection({ date }: Props) {
     return undefined;
   };
 
-  // 2) fetch entries for the day (by payload.date)
-  const entries = await getPauseEntriesByDate(form.id, date);
+  // 2) fetch entries for the day & product line (server-side filtered)
+  const entries = await getPauseEntriesByDateAndProduct(form.id, date, product);
 
   type Row = {
     pauseCode?: string;

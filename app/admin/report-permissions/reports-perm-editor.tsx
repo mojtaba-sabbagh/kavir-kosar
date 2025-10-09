@@ -55,9 +55,9 @@ export default function ReportsPermEditor({ roles, reports, perms }:{
       </div>
 
       {/* Table Container */}
-      <div className="overflow-x-auto relative">
+       <div className="overflow-auto relative max-h-[calc(100vh-200px)]">
         <table className="w-full text-sm border-collapse">
-          <thead>
+          <thead className="sticky top-0 z-20">
             <tr className="text-center text-gray-500 bg-gray-50">
               {/* Sticky Header Cell for Report Column */}
               <th className="sticky top-0 right-0 z-10 p-2 w-40 bg-gray-50 border-b border-gray-200 text-right font-semibold">

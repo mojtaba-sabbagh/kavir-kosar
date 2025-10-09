@@ -151,11 +151,10 @@ const onToggle = (
   </div>
 
   {/* Table Container */}
-  <div className="overflow-x-auto relative">
-    <table className="w-full text-sm border-collapse">
-      <thead>
+  <div className="overflow-auto relative max-h-[calc(100vh-200px)]">
+     <table className="w-full text-sm border-collapse">
+      <thead className="sticky top-0 z-20">
         <tr className="text-center text-gray-500 bg-gray-50">
-          {/* Sticky Header Cell with RGBA Transparency */}
           <th
             className="sticky top-0 right-0 z-10 p-3 w-40 border-b border-gray-200 text-right font-semibold"
             style={{ backgroundColor: 'rgba(249, 250, 251, 0.8)' }} // Gray-50 with 80% opacity
@@ -182,7 +181,6 @@ const onToggle = (
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 rounded-full bg-blue-500"></div>
                 <span className="text-gray-800">{f.titleFa}</span>
-                <div className="text-xs text-gray-500 mt-1">کد: {f.code}</div>
               </div>
             </td>
             {roles.map(r => {

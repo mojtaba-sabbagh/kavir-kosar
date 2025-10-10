@@ -3,13 +3,25 @@ import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { requireAdmin } from '@/lib/rbac';
 
+// Accept absolute URL (http/https/…) OR a relative path ("/reports/…")
+const urlSchema = z
+  .union([
+    z.string().url(),                        
+    z.string().regex(
+      /^\/?[A-Za-z0-9\-._~%!$&'()*+,;=:@/]+$/,
+      'Path may contain letters, numbers, "-", "_" and "/"'
+    ),                                      
+  ])
+  .transform((s) => (s.startsWith('/') ? s : `/${s}`));
+
 const schema = z.object({
   code: z.string().min(2),
   titleFa: z.string().min(2),
-  url: z.string().url().nullable().optional(),
+  url: urlSchema.nullable().optional(),     // keep nullable/optional behavior
   sortOrder: z.number().int().default(100),
   isActive: z.boolean().default(true),
 });
+
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';

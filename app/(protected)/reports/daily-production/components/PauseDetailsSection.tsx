@@ -1,10 +1,8 @@
-// app/(protected)/reports/daily-production/components/PauseDetailsSection.tsx
 import { prisma } from "@/lib/db";
 import { headers, cookies } from "next/headers";
 import { unstable_noStore as noStore } from "next/cache";
 
-type ProductKey = "1" | "2";
-type Props = { date: string; product: ProductKey };
+type Props = { date: string; product?: "1" | "2" };
 
 /* ----------------- tiny utils ----------------- */
 function pick<T = any>(o: any, keys: string[], def?: any): T | undefined {
@@ -14,22 +12,31 @@ function pick<T = any>(o: any, keys: string[], def?: any): T | undefined {
   }
   return def;
 }
-function isHHMM(s?: string): boolean {
-  return !!s && /^\d{1,2}:\d{2}$/.test(s);
+function faToEnDigits(s?: string): string {
+  if (!s) return "";
+  const map: Record<string, string> = {
+    "۰":"0","۱":"1","۲":"2","۳":"3","۴":"4","۵":"5","۶":"6","۷":"7","۸":"8","۹":"9",
+    "٠":"0","١":"1","٢":"2","٣":"3","٤":"4","٥":"5","٦":"6","٧":"7","٨":"8","٩":"9",
+  };
+  return String(s).replace(/[0-9۰-۹٠-٩]/g, (ch) => map[ch] ?? ch);
 }
+function isHHMM(s?: string): boolean { return !!s && /^\d{1,2}:\d{2}$/.test(faToEnDigits(s)); }
 function parseDateTime(dateISO: string, val?: string): Date | null {
   if (!val) return null;
-  if (isHHMM(val)) return new Date(`${dateISO}T${val}:00`);
-  const d = new Date(val);
+  const v = faToEnDigits(val);
+  if (isHHMM(v)) return new Date(`${dateISO}T${v}:00`);
+  const d = new Date(v);
   return isNaN(+d) ? null : d;
 }
+// TIMES & NUMBERS → ENGLISH DIGITS
 function formatTimeOnly(val?: string): string {
   if (!val) return "—";
-  if (isHHMM(val)) return val;
-  const d = new Date(val);
-  return isNaN(+d)
-    ? "—"
-    : d.toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit" });
+  const v = faToEnDigits(val);
+  if (isHHMM(v)) return v; // already "HH:MM" in EN
+  const d = new Date(v);
+  if (isNaN(+d)) return "—";
+  // 24-hour English
+  return d.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit" });
 }
 function diffMinutes(dateISO: string, start?: string, end?: string): number {
   const s = parseDateTime(dateISO, start);
@@ -42,16 +49,14 @@ function diffMinutes(dateISO: string, start?: string, end?: string): number {
 function minToHHMM(mins: number): string {
   const h = Math.floor(mins / 60);
   const m = mins % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`; // EN digits
 }
 
 /* ------------- FixedInformation lookup (pause tableSelect) ------------- */
 async function fetchFixedTitles(codes: string[]): Promise<Map<string, string>> {
   noStore();
   const map = new Map<string, string>();
-  const cleaned = Array.from(
-    new Set((codes || []).map((c) => String(c).trim()).filter((c) => c))
-  ).slice(0, 300); // accept any non-empty code
+  const cleaned = Array.from(new Set((codes || []).map((c) => String(c).trim()).filter((c) => c))).slice(0, 300);
   if (!cleaned.length) return map;
 
   const h = await headers();
@@ -88,54 +93,31 @@ async function fetchFixedTitles(codes: string[]): Promise<Map<string, string>> {
 async function getForm102500WithFields() {
   const form = await prisma.form.findFirst({
     where: { code: "102500" },
-    select: {
-      id: true,
-      fields: { select: { key: true, type: true, config: true } },
-    },
+    select: { id: true, fields: { select: { key: true, type: true, config: true } } },
   });
   return form;
 }
 function parseConfig(cfg: unknown): any {
   if (!cfg) return {};
-  if (typeof cfg === "string") {
-    try {
-      return JSON.parse(cfg);
-    } catch {
-      return {};
-    }
-  }
+  if (typeof cfg === "string") { try { return JSON.parse(cfg); } catch { return {}; } }
   return cfg as any;
 }
 
-/* -------------------- entries by payload.date AND product line -------------------- */
-async function getPauseEntriesByDateAndProduct(formId: string, date: string, product: ProductKey) {
-  // line may be stored as string "1"/"2" OR number 1/2; also there may be legacy keys
-  const lineFilters = [
-    { payload: { path: ["line"], equals: product } },
-    { payload: { path: ["line"], equals: Number(product) } },
-    { payload: { path: ["lineNo"], equals: product } },
-    { payload: { path: ["lineNo"], equals: Number(product) } },
-    { payload: { path: ["line_no"], equals: product } },
-    { payload: { path: ["line_no"], equals: Number(product) } },
-    { payload: { path: ["productionLine"], equals: product } },
-    { payload: { path: ["productionLine"], equals: Number(product) } },
-    { payload: { path: ["payload", "line"], equals: product } },
-    { payload: { path: ["payload", "line"], equals: Number(product) } },
-  ];
-
+/* -------------------- entries by payload.date only -------------------- */
+async function getPauseEntriesByDate(formId: string, date: string, product?: "1" | "2") {
+  // Filter by payload.line when product provided: "1" → line==1, "2" → line==2
+  const lineNum = product === "2" ? 2 : product === "1" ? 1 : undefined;
   return prisma.formEntry.findMany({
     where: {
       formId,
       AND: [
-        {
-          OR: [
-            { payload: { path: ["date"], equals: date } },
-            { payload: { path: ["payloadDate"], equals: date } },
-            { payload: { path: ["tarikh"], equals: date } },
-            { payload: { path: ["payload", "date"], equals: date } },
-          ],
-        },
-        { OR: lineFilters },
+        { OR: [
+          { payload: { path: ["date"], equals: date } },
+          { payload: { path: ["payloadDate"], equals: date } },
+          { payload: { path: ["tarikh"], equals: date } },
+          { payload: { path: ["payload", "date"], equals: date } },
+        ]},
+        ...(lineNum ? [{ payload: { path: ["line"], equals: String(lineNum) } }] : []),
       ],
     },
     select: { id: true, payload: true },
@@ -147,11 +129,7 @@ export default async function PauseDetailsSection({ date, product }: Props) {
   // 1) load form and its fields (to map select values -> labels)
   const form = await getForm102500WithFields();
   if (!form?.id) {
-    return (
-      <div className="rounded-lg border border-gray-200 bg-white p-4 text-gray-700">
-        فرم 102500 یافت نشد.
-      </div>
-    );
+    return <div className="rounded-lg border border-gray-200 bg-white p-4 text-gray-700">فرم 102500 یافت نشد.</div>;
   }
 
   // Build select options map: key -> (value -> label)
@@ -181,24 +159,17 @@ export default async function PauseDetailsSection({ date, product }: Props) {
           : raw;
       const str = String(val ?? "");
 
-      // 1) prefer label from options of the SAME key
       const fromSame = selectMaps[key]?.[str];
       if (fromSame) return fromSame;
-
-      // 2) if payload already contains a label (rare), use it
       if (typeof raw === "object" && raw?.label) return String(raw.label);
-
-      // 3) fallback: search other select maps for the same value
       for (const k in selectMaps) if (selectMaps[k]?.[str]) return selectMaps[k][str];
-
-      // 4) last resort: show value
       return str;
     }
     return undefined;
   };
 
-  // 2) fetch entries for the day & product line (server-side filtered)
-  const entries = await getPauseEntriesByDateAndProduct(form.id, date, product);
+  // 2) fetch entries for the day (by payload.date + line filter)
+  const entries = await getPauseEntriesByDate(form.id, date, product);
 
   type Row = {
     pauseCode?: string;
@@ -216,7 +187,7 @@ export default async function PauseDetailsSection({ date, product }: Props) {
   for (const e of entries) {
     const v = (e.payload ?? {}) as any;
 
-    // pause (tableSelect) — may be string code or object {code,value,id,title,label,...}
+    // pause (tableSelect)
     const pauseRaw = v?.pause ?? v?.pouse ?? v?.pauseCode ?? v?.pause_code;
     let pauseCode: string | undefined;
     let pauseLabel: string | undefined;
@@ -229,7 +200,7 @@ export default async function PauseDetailsSection({ date, product }: Props) {
       pauseCode = pauseRaw;
     }
 
-    // pouse_cause (select) — map using the form's options (handle legacy variants)
+    // cause (select)
     const cause = selectLabel(v, ["pouse_cause", "pause_cause", "cause"]);
 
     const start = pick<string>(v, ["start", "شروع"]);
@@ -268,14 +239,14 @@ export default async function PauseDetailsSection({ date, product }: Props) {
   // 5) total duration
   const totalMin = rows.reduce((s, r) => s + (r.minutes || 0), 0);
 
-  // 6) render
+  // 6) render (numbers in EN; no Jalali date here)
   return (
-    <div className="rounded-lg border border-gray-200 bg-white">
-      <div className="border-b border-gray-200 px-4 py-3 font-semibold text-gray-900">
+    <div className="rounded-lg border border-gray-200 bg-white font-semibold">
+      <div className="border-b border-gray-200 px-4 py-3 text-gray-900">
         توقفات و تعمیرات
       </div>
       <div className="overflow-x-auto p-4">
-        <table className="min-w-full divide-y divide-gray-200">
+        <table className="min-w-full divide-y divide-gray-200 font-semibold">
           <thead className="bg-white">
             <tr>
               <th className="px-3 py-2 text-right text-sm font-medium text-gray-900">#</th>
@@ -289,7 +260,7 @@ export default async function PauseDetailsSection({ date, product }: Props) {
           <tbody className="divide-y divide-gray-100 bg-white">
             {rows.map((r, idx) => (
               <tr key={idx}>
-                <td className="px-3 py-2 whitespace-nowrap">{idx + 1}</td>
+                <td className="px-3 py-2 whitespace-nowrap">{String(idx + 1)}</td>
                 <td className="px-3 py-2">{r.pauseTitle}</td>
                 <td className="px-3 py-2">{r.cause ?? "—"}</td>
                 <td className="px-3 py-2 whitespace-nowrap">{formatTimeOnly(r.start)}</td>

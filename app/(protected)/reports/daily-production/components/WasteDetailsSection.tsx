@@ -1,10 +1,8 @@
-// app/(protected)/reports/daily-production/components/WasteDetailsSection.tsx
 import { prisma } from "@/lib/db";
 import { headers, cookies } from "next/headers";
 import { unstable_noStore as noStore } from "next/cache";
 
-type ProductKey = "1" | "2";
-type Props = { date: string; product: ProductKey };
+type Props = { date: string; product?: "1" | "2" };
 
 /* -------------------- tiny utils -------------------- */
 function pick<T = any>(o: any, keys: string[], def?: any): T | undefined {
@@ -14,20 +12,6 @@ function pick<T = any>(o: any, keys: string[], def?: any): T | undefined {
   }
   return def;
 }
-function faToEnDigits(s: any): string {
-  const str = String(s ?? "");
-  const map: Record<string, string> = {
-    "۰":"0","۱":"1","۲":"2","۳":"3","۴":"4","۵":"5","۶":"6","۷":"7","۸":"8","۹":"9",
-    "٠":"0","١":"1","٢":"2","٣":"3","٤":"4","٥":"5","٦":"6","٧":"7","٨":"8","٩":"9",
-  };
-  return str.replace(/[0-9۰-۹٠-٩]/g, (ch) => map[ch] ?? ch);
-}
-function onlyDigits(input: any): string | undefined {
-  if (input == null) return undefined;
-  const s = faToEnDigits(String(input));
-  const d = s.replace(/[^\d]/g, "");
-  return d || undefined;
-}
 function num(x: any): number { const n = Number(x); return Number.isFinite(n) ? n : 0; }
 function entryDateStr(obj: any): string | undefined {
   return pick<string>(obj, ["date", "payloadDate", "tarikh", "payload.date"]);
@@ -36,6 +20,7 @@ function toJalali(dateStr?: string): string {
   if (!dateStr) return "—";
   try {
     const d = new Date(dateStr.length <= 10 ? `${dateStr}T00:00:00Z` : dateStr);
+    // Jalali date stays Persian digits
     const fmt = new Intl.DateTimeFormat("fa-IR-u-ca-persian", { year: "numeric", month: "2-digit", day: "2-digit" });
     return fmt.format(d);
   } catch { return dateStr; }
@@ -45,6 +30,8 @@ function payloadShift(obj: any): number | undefined {
   const n = Number(s);
   return Number.isFinite(n) ? n : undefined;
 }
+// English-number formatter
+const nf = (n: number, frac = 3) => n.toLocaleString("en-US", { maximumFractionDigits: frac, minimumFractionDigits: 0 });
 
 /* -------------------- tableSelect helpers -------------------- */
 type TS = { code?: string; label?: string };
@@ -92,10 +79,13 @@ async function getFormIdsByCodes(formCodes: string[]): Promise<string[]> {
 }
 
 /* -------------------- fetch by payload.date only -------------------- */
-async function getWasteEntriesByDate(date: string, formCodes: string[]) {
+async function getWasteEntriesByDate(date: string, formCodes: string[], product?: "1" | "2") {
   const formIds = await getFormIdsByCodes(formCodes);
   if (formIds.length === 0) return [];
-  return prisma.formEntry.findMany({
+  // Filter wastes by product value via allowed codes per product
+  const chipsSet = new Set(["5203280100", "5203290100", "5103420000", "5102030100", "5101020100"]);
+  const popcornSet = new Set(["5102000000", "5101000200"]);
+  const list = await prisma.formEntry.findMany({
     where: {
       formId: { in: formIds },
       OR: [
@@ -108,13 +98,25 @@ async function getWasteEntriesByDate(date: string, formCodes: string[]) {
     select: { id: true, payload: true, formId: true },
     orderBy: { id: "asc" },
   });
+
+  if (!product) return list;
+
+  return list.filter(e => {
+    const v = (e.payload ?? {}) as any;
+    const code =
+      resolveTableSelect(v, "waste").code ??
+      pick<string>(v, ["code", "kardexCode", "itemCode", "کد", "کد_کاردکس"]);
+    if (!code) return false;
+    if (product === "1") return chipsSet.has(String(code));
+    return popcornSet.has(String(code));
+  });
 }
 
 /* -------------------- FixedInformation lookup (bulk) -------------------- */
 async function fetchFixedTitles(codes: string[]): Promise<Map<string, string>> {
   noStore();
   const map = new Map<string, string>();
-  const uniq = Array.from(new Set(codes.filter(Boolean).map(c => onlyDigits(c) ?? "").filter(Boolean))).slice(0, 500);
+  const uniq = Array.from(new Set(codes.filter(Boolean).map(String))).slice(0, 500);
   if (uniq.length === 0) return map;
 
   const h = await headers();
@@ -136,7 +138,7 @@ async function fetchFixedTitles(codes: string[]): Promise<Map<string, string>> {
     });
     const items: any[] = r.ok ? (await r.json().catch(() => null))?.items ?? [] : [];
     for (const it of items) {
-      const code = onlyDigits(it?.code) ?? "";
+      const code = String(it?.code ?? "");
       const title = it?.title ?? it?.titleFa ?? it?.nameFa ?? it?.name ?? it?.label ?? "";
       if (code) map.set(code, title ? String(title) : code);
     }
@@ -152,7 +154,7 @@ async function fetchFixedTitles(codes: string[]): Promise<Map<string, string>> {
         });
         if (!rr.ok) { map.set(c, c); return; }
         const jj = await rr.json().catch(() => null);
-        const it1 = Array.isArray(jj?.items) ? jj.items.find((x: any) => onlyDigits(x?.code) === c) : null;
+        const it1 = Array.isArray(jj?.items) ? jj.items.find((x: any) => String(x?.code) === c) : null;
         const t1 = it1?.title ?? it1?.titleFa ?? it1?.nameFa ?? it1?.name ?? it1?.label ?? "";
         map.set(c, t1 ? String(t1) : c);
       }));
@@ -163,24 +165,12 @@ async function fetchFixedTitles(codes: string[]): Promise<Map<string, string>> {
   return map;
 }
 
-/* -------------------- allowed waste codes per product -------------------- */
-const WASTE_CODES_BY_PRODUCT: Record<ProductKey, string[]> = {
-  "1": ["5203280100", "5203290100", "5103420000", "5102030100", "5101020100"], // چیپس
-  "2": ["5102000000", "5101000200"],                                         // پاپکورن
-};
-function isAllowedWasteForProduct(code: string | undefined, product: ProductKey): boolean {
-  if (!code) return false;
-  const d = onlyDigits(code);
-  if (!d) return false;
-  return WASTE_CODES_BY_PRODUCT[product].includes(d);
-}
-
 /* -------------------- Component (pivot) -------------------- */
 export default async function WasteDetailsSection({ date, product }: Props) {
-  // 1) fetch entries (forms 1020508 + 1020400) by payload.date
-  const entries = await getWasteEntriesByDate(date, ["1020508", "1020400"]);
+  // fetch entries (forms 1020508 + 1020400) respecting product filter set above
+  const entries = await getWasteEntriesByDate(date, ["1020508", "1020400"], product);
 
-  // 2) collect waste codes + amounts by shift
+  // collect waste codes + amounts by shift
   type Wire = { wasteCode: string; wasteLabelFromPayload?: string; shift?: number; amount: number };
   const wires: Wire[] = [];
   const codes = new Set<string>();
@@ -188,28 +178,20 @@ export default async function WasteDetailsSection({ date, product }: Props) {
   for (const e of entries) {
     const v = (e.payload ?? {}) as any;
     const wasteTS = resolveTableSelect(v, "waste");
-    const rawCode =
+    const wasteCode =
       wasteTS.code ??
       pick<string>(v, ["code", "kardexCode", "itemCode", "کد", "کد_کاردکس"]);
-    const code = onlyDigits(rawCode);
     const amount = wasteAmount(v);
-    if (!code || !amount) continue;
+    if (!wasteCode || !amount) continue;
 
-    // Optional guard: if payload.product exists and is different, skip
-    const pval = String(pick<any>(v, ["product", "payload.product"], "") ?? "");
-    if (pval && pval !== product) continue;
-
-    // ✅ product-specific code whitelist
-    if (!isAllowedWasteForProduct(code, product)) continue;
-
-    const sh = payloadShift(v); // 1/2/3 (others ignored for columns but counted in sum)
+    const sh = payloadShift(v); // 1/2/3
     wires.push({
-      wasteCode: code,
+      wasteCode: String(wasteCode),
       wasteLabelFromPayload: wasteTS.label ?? payloadLabelFallback(v),
       shift: sh,
       amount,
     });
-    codes.add(code);
+    codes.add(String(wasteCode));
   }
 
   if (wires.length === 0) {
@@ -220,10 +202,10 @@ export default async function WasteDetailsSection({ date, product }: Props) {
     );
   }
 
-  // 3) resolve waste titles via FixedInformation
+  // resolve waste titles via FixedInformation
   const titleMap = await fetchFixedTitles(Array.from(codes));
 
-  // 4) pivot: rows by wasteTitle; cols: date | s1 | s2 | s3 | sum
+  // pivot: rows by wasteTitle; cols: date | s1 | s2 | s3 | sum
   type Row = { wasteTitle: string; s1: number; s2: number; s3: number; sum: number };
   const pivot = new Map<string, Row>();
 
@@ -246,7 +228,7 @@ export default async function WasteDetailsSection({ date, product }: Props) {
     a.wasteTitle.localeCompare(b.wasteTitle, "fa")
   );
 
-  const dateJ = toJalali(date);
+  const dateJ = toJalali(date); // keep Persian digits for Jalali date
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white">
@@ -255,14 +237,14 @@ export default async function WasteDetailsSection({ date, product }: Props) {
       </div>
 
       <div className="overflow-x-auto p-4">
-        <table className="min-w-full divide-y divide-gray-200">
+        <table className="min-w-full divide-y divide-gray-200 font-semibold">
           <thead className="bg-white">
             <tr>
               <th className="px-3 py-2 text-right text-sm font-medium text-gray-900">نوع ضایعات</th>
               <th className="px-3 py-2 text-right text-sm font-medium text-gray-900">تاریخ</th>
-              <th className="px-3 py-2 text-right text-sm font-medium text-gray-900">شیفت ۱</th>
-              <th className="px-3 py-2 text-right text-sm font-medium text-gray-900">شیفت ۲</th>
-              <th className="px-3 py-2 text-right text-sm font-medium text-gray-900">شیفت ۳</th>
+              <th className="px-3 py-2 text-right text-sm font-medium text-gray-900">شیفت 1</th>
+              <th className="px-3 py-2 text-right text-sm font-medium text-gray-900">شیفت 2</th>
+              <th className="px-3 py-2 text-right text-sm font-medium text-gray-900">شیفت 3</th>
               <th className="px-3 py-2 text-left  text-sm font-medium text-gray-900">جمع</th>
             </tr>
           </thead>
@@ -271,10 +253,10 @@ export default async function WasteDetailsSection({ date, product }: Props) {
               <tr key={r.wasteTitle}>
                 <td className="px-3 py-2">{r.wasteTitle}</td>
                 <td className="px-3 py-2 whitespace-nowrap">{dateJ}</td>
-                <td className="px-3 py-2 whitespace-nowrap">{r.s1 ? r.s1.toLocaleString("fa-IR") : "—"}</td>
-                <td className="px-3 py-2 whitespace-nowrap">{r.s2 ? r.s2.toLocaleString("fa-IR") : "—"}</td>
-                <td className="px-3 py-2 whitespace-nowrap">{r.s3 ? r.s3.toLocaleString("fa-IR") : "—"}</td>
-                <td className="px-3 py-2 text-left font-semibold">{r.sum.toLocaleString("fa-IR")}</td>
+                <td className="px-3 py-2 whitespace-nowrap">{r.s1 ? nf(r.s1) : "—"}</td>
+                <td className="px-3 py-2 whitespace-nowrap">{r.s2 ? nf(r.s2) : "—"}</td>
+                <td className="px-3 py-2 whitespace-nowrap">{r.s3 ? nf(r.s3) : "—"}</td>
+                <td className="px-3 py-2 text-left font-semibold">{nf(r.sum)}</td>
               </tr>
             ))}
           </tbody>

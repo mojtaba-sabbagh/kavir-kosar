@@ -39,6 +39,23 @@ function isNumericLike(s: string): boolean {
   return /^-?\d+(\.\d+)?$/.test(en);
 }
 
+function fmtFaDate(iso?: string | null) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(+d)) return String(iso);
+  return new Intl.DateTimeFormat("fa-IR", { dateStyle: "short" }).format(d);
+}
+
+function fmtFaTime(iso?: string | null) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(+d)) return String(iso);
+  return new Intl.DateTimeFormat("fa-IR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(d);
+}
+
 
 export default function DynamicForm({ form, fields }: Props) {
   const sorted = [...fields].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
@@ -174,11 +191,22 @@ export default function DynamicForm({ form, fields }: Props) {
                 />
               )}
 
-              {f.type === 'datetime' && (
-                <JDateTimePicker
-                  value={(values[f.key] as string | undefined) ?? null}
-                  onChange={(iso) => set(f.key, iso)}
-                />
+              {f.type === "datetime" && (
+                <div className="flex items-center gap-3">
+                   {/* DateTime picker at half width */}
+                  <div className="w-1/2 min-w-[260px]">
+                    <JDateTimePicker
+                      value={(values[f.key] as string | undefined) ?? null}
+                      onChange={(iso) => set(f.key, iso)}
+                    />
+                  </div>
+                  {/* Time preview BEFORE the picker (no date) */}
+                  <div className="text-sm font-semibold text-gray-700 shrink-0">
+                    <span>
+                      {fmtFaTime(values[f.key] as string | undefined)}
+                    </span>
+                  </div>
+                </div>
               )}
               {f.type === 'checkbox' && (
                 <label className="inline-flex items-center gap-2">

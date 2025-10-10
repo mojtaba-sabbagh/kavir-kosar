@@ -1,3 +1,4 @@
+//app/api/forms/[entryId]/confirm/route.ts
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/auth';
@@ -33,13 +34,13 @@ export async function POST(_req: Request, ctx: { params: Promise<{ entryId: stri
   // Apply Kardex depending on mapping config + type of confirm
   let applied = false;
   if (myTask.isFinal) {
-    await prisma.formEntry.update({ where: { id: entryId }, data: { status: 'finalConfirmed', finalConfirmedAt: new Date() } });
+    await prisma.formEntry.update({ where: { id: entryId }, data: { status: 'finalConfirmed', finalConfirmedAt: new Date(), finalConfirmedById: user.id, } });
     const res = await applyKardexForEntry(entryId, user.id);
     applied = !!res.applied;
     return NextResponse.json({ ok: true, step: 'final', applied });
   } else {
     // regular confirm
-    await prisma.formEntry.update({ where: { id: entryId }, data: { status: 'confirmed' } });
+    await prisma.formEntry.update({ where: { id: entryId }, data: { status: 'confirmed', firstConfirmedAt: new Date() } });
     const wantsAnyConfirm = formWantsApplyOnAnyConfirm(entry.form.fields as any[]);
     if (wantsAnyConfirm) {
       const res = await applyKardexForEntry(entryId, user.id);

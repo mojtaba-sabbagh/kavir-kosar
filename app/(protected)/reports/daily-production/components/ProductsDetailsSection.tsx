@@ -1,12 +1,12 @@
 // app/(protected)/reports/daily-production/components/ProductsDetailsSection.tsx
 import { prisma } from "@/lib/db";
+import type { ProductKey } from "@/lib/report-helpers";
 
 export const dynamic = "force-dynamic";
 
-type ProductKey = "1" | "2";
 type Props = { date: string; product: ProductKey };
 
-/* ---------- helpers ---------- */
+/* ---------- helpers (unchanged + small additions) ---------- */
 function faToEnDigits(s: any): string {
   const str = String(s ?? "");
   const map: Record<string, string> = {
@@ -62,9 +62,10 @@ function normalizeIsoDateLike(input: unknown): string | null {
   const pad = (n: string) => n.padStart(2, "0");
   return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
 }
+const prefixFor = (product: ProductKey) => (product === "2" ? "42" : "41");
 
-/** Extract products (code + amount). Weight will be filled from Kardex later. */
-function extractProducts(p: any): { code: string; amount: number }[] {
+/** Extract *count-based* products from payload.product / payload.products */
+function extractCountProducts(p: any): { code: string; amount: number }[] {
   const amountTop = parseAmount(p?.amount ?? p?.qty ?? p?.quantity ?? p?.count ?? p?.value);
   const prod = p?.product ?? p?.products;
   const out: { code: string; amount: number }[] = [];
@@ -74,19 +75,16 @@ function extractProducts(p: any): { code: string; amount: number }[] {
     if (code && amountTop !== 0) out.push({ code, amount: amountTop });
     return out;
   }
-
   if (Array.isArray(prod)) {
     for (const r of prod) {
       const rawCode =
-        r?.code ?? r?.kardexCode ?? r?.itemCode ??
-        r?.kardex?.code ?? r?.item?.code ?? r?.name;
+        r?.code ?? r?.kardexCode ?? r?.itemCode ?? r?.kardex?.code ?? r?.item?.code ?? r?.name;
       const code = cleanCode(rawCode);
       const a = parseAmount(r?.amount ?? r?.qty ?? r?.quantity ?? r?.count ?? amountTop);
       if (code && a !== 0) out.push({ code, amount: a });
     }
     return out;
   }
-
   if (prod && typeof prod === "object") {
     for (const [k, v] of Object.entries(prod)) {
       const code = cleanCode(k);
@@ -94,34 +92,40 @@ function extractProducts(p: any): { code: string; amount: number }[] {
       if (code && a !== 0) out.push({ code, amount: a });
     }
   }
-
   return out;
 }
 
-/* ---------- product-series filter ---------- */
-function matchesSelectedSeries(code: string, product: ProductKey): boolean {
-  // چیپس: codes start with 41  |  پاپکورن: codes start with 42
-  return product === "1" ? code.startsWith("41") : code.startsWith("42");
+/** Extract *weight-based* rows from payload.raw_material when it starts with 41/42 */
+function extractWeightRows(p: any): { code: string; kg: number }[] {
+  const code = cleanCode(p?.raw_material ?? p?.rawMaterial ?? p?.material ?? p?.code);
+  const amount = parseAmount(p?.amount ?? p?.qty ?? p?.quantity ?? p?.count ?? p?.value);
+  if (!code || amount === 0) return [];
+  // Only accept “product-like” raw_materials
+  if (code.startsWith("41") || code.startsWith("42")) return [{ code, kg: amount }];
+  return [];
 }
 
 /* ---------- types ---------- */
 type Row = {
   dateFa: string;            // Jalali of payload.date
   shift?: 1 | 2 | 3;
-  unitCode?: string | null;  // payload.unit (for FixedInformation lookup)
+  unitCode?: string | null;  // payload.unit (FixedInformation lookup)
   unitName?: string | null;  // FixedInformation.title
   code: string;              // product code
   nameFa?: string | null;    // KardexItem.nameFa
-  amount: number;
-  weight: number;            // amount * (KardexItem.extra.weight)
+  amount: number;            // count OR kg (when weightBased)
+  weight: number;            // final kg to show
+  weightBased: boolean;      // true when coming from raw_material 41/42 (amount is kg)
   note?: string | null;
 };
 
 export default async function ProductsDetailsSection({ date, product }: Props) {
+  const wantedPrefix = prefixFor(product);
+
   // fetch entries for the day, finalConfirmed
   const entries = await prisma.formEntry.findMany({
     where: {
-      form: { code: "1031007" },
+      form: { code: "1031000" },
       status: "finalConfirmed",
       payload: { path: ["date"], equals: date },
     },
@@ -145,27 +149,48 @@ export default async function ProductsDetailsSection({ date, product }: Props) {
     const payloadDate = normalizeIsoDateLike(p?.date) || date;
     const dateFa = toJalali(payloadDate);
 
-    const prods = extractProducts(p);
-    for (const it of prods) {
-      // ✅ filter by selected product series
-      if (!matchesSelectedSeries(it.code, product)) continue;
+    // 1) count-based via payload.product
+    const countItems = extractCountProducts(p).filter((it) => it.code.startsWith(wantedPrefix));
 
+    // 2) weight-based via payload.raw_material (amount already kg)
+    const weightItems = extractWeightRows(p).filter((it) => it.code.startsWith(wantedPrefix));
+
+    if (countItems.length === 0 && weightItems.length === 0) continue;
+
+    // push rows
+    for (const it of countItems) {
       codes.add(it.code);
       rows.push({
         dateFa,
         shift,
         unitCode,
-        unitName: null, // fill after lookup
+        unitName: null,
         code: it.code,
-        nameFa: null,   // fill after lookup
-        amount: it.amount,
-        weight: 0,      // fill after lookup
+        nameFa: null,
+        amount: it.amount,     // count
+        weight: 0,             // fill after Kardex
+        weightBased: false,
+        note: p?.description ?? null,
+      });
+    }
+    for (const it of weightItems) {
+      codes.add(it.code);
+      rows.push({
+        dateFa,
+        shift,
+        unitCode,
+        unitName: null,
+        code: it.code,
+        nameFa: null,
+        amount: it.kg,         // already kg
+        weight: it.kg,         // show kg directly
+        weightBased: true,     // block re-multiplication
         note: p?.description ?? null,
       });
     }
   }
 
-  // 1) Names + per-unit weight from KardexItem.extra.weight
+  // 1) Names + per-unit weight from KardexItem.extra.weight (only for count-based rows)
   if (codes.size) {
     const items = await prisma.kardexItem.findMany({
       where: { code: { in: [...codes] } },
@@ -176,9 +201,11 @@ export default async function ProductsDetailsSection({ date, product }: Props) {
       const it = itemMap.get(r.code);
       if (it) {
         r.nameFa = it.nameFa ?? r.nameFa ?? null;
-        const perUnitWeight = parseNumber((it as any)?.extra?.weight);
-        const w = Number.isFinite(perUnitWeight) ? perUnitWeight : 0;
-        r.weight = r.amount * w;
+        if (!r.weightBased) {
+          const perUnitWeight = parseNumber((it as any)?.extra?.weight);
+          const w = Number.isFinite(perUnitWeight) ? perUnitWeight : 0;
+          r.weight = r.amount * w;
+        }
       }
     }
   }
@@ -213,7 +240,7 @@ export default async function ProductsDetailsSection({ date, product }: Props) {
 
   return (
     <section className="w-full">
-      <h2 className="text-xl font-bold mb-3">جزئیات تولید – {toJalali(date)}</h2>
+      <h2 className="text-xl font-bold mb-3">جزئیات تولید</h2>
 
       {present.length === 0 ? (
         <div className="text-sm text-gray-600 border rounded-lg p-3">
@@ -225,11 +252,10 @@ export default async function ProductsDetailsSection({ date, product }: Props) {
             <div key={g.code} className="border rounded-lg">
               <div className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-t-lg">
                 <div className="font-semibold">
-                  {g.nameFa || "بدون نام"}{" "}
-                  <span className="text-xs text-gray-500" dir="ltr">({g.code})</span>
+                  {g.nameFa || "بدون نام"} <span className="text-xs text-gray-500" dir="ltr">({g.code})</span>
                 </div>
                 <div className="text-sm">
-                  جمع تعداد: <span className="font-bold">{nf(g.totalAmount)}</span>
+                  جمع مقدار: <span className="font-bold">{nf(g.totalAmount)}</span>
                   <span className="mx-2">|</span>
                   جمع وزن: <span className="font-bold">{nf(g.totalWeight)}</span>
                 </div>
@@ -244,9 +270,9 @@ export default async function ProductsDetailsSection({ date, product }: Props) {
                       <th className="px-3 py-2">شیفت</th>
                       <th className="px-3 py-2">کد محصول</th>
                       <th className="px-3 py-2">نام محصول</th>
-                      <th className="px-3 py-2">تعداد</th>
+                      <th className="px-3 py-2">تعداد/مقدار</th>
                       <th className="px-3 py-2">واحد</th>
-                      <th className="px-3 py-2">وزن</th>
+                      <th className="px-3 py-2">وزن (کیلوگرم)</th>
                       <th className="px-3 py-2">توضیحات</th>
                     </tr>
                   </thead>

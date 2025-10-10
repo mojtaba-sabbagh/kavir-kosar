@@ -1,12 +1,12 @@
 // app/(protected)/reports/daily-production/components/ProductsSummarySection.tsx
 import { prisma } from "@/lib/db";
+import type { ProductKey } from "@/lib/report-helpers";
 
 export const dynamic = "force-dynamic";
 
-type ProductKey = "1" | "2";
 type Props = { date: string; product: ProductKey };
 
-/* helpers */
+/* helpers (same as details, trimmed where not needed) */
 function faToEnDigits(s: any): string {
   const str = String(s ?? "");
   const map: Record<string, string> = {
@@ -37,9 +37,7 @@ function parseShift(v: any): 1 | 2 | 3 | undefined {
   }
   return x === 1 || x === 2 || x === 3 ? x : undefined;
 }
-function isSourceOne(v: any): boolean {
-  return Number(faToEnDigits(v)) === 1;
-}
+function isSourceOne(v: any): boolean { return Number(faToEnDigits(v)) === 1; }
 function toJalali(isoDate: string, latn = false): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
   if (!m) return isoDate;
@@ -51,25 +49,23 @@ function toJalali(isoDate: string, latn = false): string {
     ).format(d);
   } catch { return isoDate; }
 }
-
-/* product-series filter */
-function matchesSelectedSeries(code: string, product: ProductKey): boolean {
-  // چیپس: 41*  |  پاپکورن: 42*
-  return product === "1" ? code.startsWith("41") : code.startsWith("42");
-}
+const prefixFor = (product: ProductKey) => (product === "2" ? "42" : "41");
 
 type Agg = {
   code: string;
   nameFa?: string | null;
-  shifts: Record<1 | 2 | 3, number>;
-  totalAmount: number;
-  totalWeight: number;
+  shifts: Record<1 | 2 | 3, number>; // sum of amount (count or kg) just like details
+  totalAmount: number;               // count or kg (if weight-based rows)
+  totalWeight: number;               // final kg
+  weightBasedAny: boolean;           // to know if some rows are weight-based
 };
 
 export default async function ProductsSummarySection({ date, product }: Props) {
+  const wantedPrefix = prefixFor(product);
+
   const entries = await prisma.formEntry.findMany({
     where: {
-      form: { code: "1031007" },
+      form: { code: "1031000" },
       status: "finalConfirmed",
       payload: { path: ["date"], equals: date },
     },
@@ -81,7 +77,7 @@ export default async function ProductsSummarySection({ date, product }: Props) {
   const byCode = new Map<string, Agg>();
   const codes = new Set<string>();
 
-  const extractProducts = (p: any) => {
+  const extractCount = (p: any) => {
     const amountTop = parseAmount(p?.amount ?? p?.qty ?? p?.quantity ?? p?.count ?? p?.value);
     const prod = p?.product ?? p?.products;
 
@@ -110,6 +106,13 @@ export default async function ProductsSummarySection({ date, product }: Props) {
     return [];
   };
 
+  const extractWeight = (p: any) => {
+    const code = cleanCode(p?.raw_material ?? p?.rawMaterial ?? p?.material ?? p?.code);
+    const amount = parseAmount(p?.amount ?? p?.qty ?? p?.quantity ?? p?.count ?? p?.value);
+    if (!code || amount === 0) return [];
+    return code.startsWith("41") || code.startsWith("42") ? [{ code, kg: amount }] : [];
+  };
+
   const getAgg = (code: string): Agg => {
     if (!byCode.has(code)) {
       byCode.set(code, {
@@ -117,7 +120,8 @@ export default async function ProductsSummarySection({ date, product }: Props) {
         nameFa: undefined,
         shifts: { 1: 0, 2: 0, 3: 0 },
         totalAmount: 0,
-        totalWeight: 0, // compute later after Kardex lookup
+        totalWeight: 0,
+        weightBasedAny: false,
       });
     }
     return byCode.get(code)!;
@@ -129,19 +133,25 @@ export default async function ProductsSummarySection({ date, product }: Props) {
     const s = parseShift(p?.shift);
     if (!s) continue;
 
-    const items = extractProducts(p);
-    for (const it of items) {
-      // ✅ filter by selected product series
-      if (!matchesSelectedSeries(it.code, product)) continue;
-
+    // count-based
+    for (const it of extractCount(p).filter((i) => i.code.startsWith(wantedPrefix))) {
       const a = getAgg(it.code);
       a.shifts[s] += it.amount;
       a.totalAmount += it.amount;
       codes.add(it.code);
     }
+    // weight-based
+    for (const it of extractWeight(p).filter((i) => i.code.startsWith(wantedPrefix))) {
+      const a = getAgg(it.code);
+      a.shifts[s] += it.kg;     // treat amount as kg for shifts too
+      a.totalAmount += it.kg;   // keep consistent with details "amount/مقدار"
+      a.totalWeight += it.kg;   // final kg
+      a.weightBasedAny = true;
+      codes.add(it.code);
+    }
   }
 
-  // get names + per-unit weights from KardexItem.extra.weight
+  // add names + per-unit weights for count-based totals
   if (codes.size) {
     const items = await prisma.kardexItem.findMany({
       where: { code: { in: [...codes] } },
@@ -152,16 +162,17 @@ export default async function ProductsSummarySection({ date, product }: Props) {
       const it = map.get(a.code);
       if (it) {
         a.nameFa = it.nameFa ?? a.nameFa;
-        const perUnitWeight = parseNumber((it as any)?.extra?.weight);
-        const w = Number.isFinite(perUnitWeight) ? perUnitWeight : 0;
-        a.totalWeight = a.totalAmount * w;
+        // Only multiply counts when we *didn't* already inject weight-based rows
+        if (!a.weightBasedAny) {
+          const perUnitWeight = parseNumber((it as any)?.extra?.weight);
+          const w = Number.isFinite(perUnitWeight) ? perUnitWeight : 0;
+          a.totalWeight = a.totalAmount * w;
+        }
       }
     }
   }
 
-  const rows = [...byCode.values()].sort((x, y) =>
-    (x.nameFa || "").localeCompare(y.nameFa || "", "fa")
-  );
+  const rows = [...byCode.values()].sort((x, y) => (x.nameFa || "").localeCompare(y.nameFa || "", "fa"));
   const nf = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 3 });
   const hasAny = rows.length > 0;
 
@@ -169,7 +180,7 @@ export default async function ProductsSummarySection({ date, product }: Props) {
     <section className="w-full">
       <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
         <div className="px-4 py-3 border-b">
-          <h2 className="text-xl font-bold">خلاصه تولید – {toJalali(date)}</h2>
+          <h2 className="text-xl font-bold">خلاصه تولید</h2>
         </div>
 
         <div className="p-3">

@@ -206,7 +206,7 @@ export default async function RawMaterialsDetailsSection({ date, product }: Prop
   return (
     <section className="w-full">
       <h2 className="text-xl font-bold mb-3">
-        جزئیات تراکنش مواد اولیه – {toJalali(date)}
+        جزئیات تراکنش مواد اولیه
       </h2>
 
       {present.length === 0 ? (

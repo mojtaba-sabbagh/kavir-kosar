@@ -1,6 +1,5 @@
 // app/(protected)/reports/daily-production/components/RawMaterialsSection.tsx
 import { prisma } from "@/lib/db";
-
 export const dynamic = "force-dynamic";
 
 type ProductKey = "1" | "2";
@@ -10,17 +9,16 @@ type Props = {
   hours?: number;
   shifts?: (1 | 2 | 3)[];
   onlyConfirmed?: boolean;
-  product: ProductKey; // "1" chips | "2" popcorn
+  product: ProductKey;
 };
 
-/* ---------------- utilities ---------------- */
-function faToEnDigits(s: any): string {
-  const str = String(s ?? "");
+/* ---------- helpers ---------- */
+function faToEnDigits(s: string): string {
   const map: Record<string, string> = {
     "۰":"0","۱":"1","۲":"2","۳":"3","۴":"4","۵":"5","۶":"6","۷":"7","۸":"8","۹":"9",
     "٠":"0","١":"1","٢":"2","٣":"3","٤":"4","٥":"5","٦":"6","٧":"7","٨":"8","٩":"9",
   };
-  return str.replace(/[0-9۰-۹٠-٩]/g, (ch) => map[ch] ?? ch);
+  return String(s ?? "").replace(/[0-9۰-۹٠-٩]/g, ch => map[ch] ?? ch);
 }
 function cleanCode(input: any): string | undefined {
   if (input == null) return undefined;
@@ -29,146 +27,56 @@ function cleanCode(input: any): string | undefined {
   return digits || undefined;
 }
 function parseShift(value: any): 1 | 2 | 3 | undefined {
-  const n = Number(value);
-  return n === 1 || n === 2 || n === 3 ? (n as 1 | 2 | 3) : undefined;
+  const n = Number(value?.value ?? value);
+  return n === 1 || n === 2 || n === 3 ? n : undefined;
 }
-function fmtEn(n: number, frac = 3) {
-  return n.toLocaleString("en-US", { maximumFractionDigits: frac, minimumFractionDigits: 0 });
+function parseAmount(v: any): number {
+  if (typeof v === "string") return parseFloat(faToEnDigits(v).replace(/,/g, ""));
+  return Number(v);
 }
-
-/* ------------ your groups (kept) ------------ */
-const RAW_MATERIAL_GROUPS_BY_PRODUCT: Record<
-  ProductKey,
-  Array<{ key: string; labelFa: string; prefixes?: string[]; patterns?: string[] }>
-> = {
-  "1": [
-    { key: "corn",   labelFa: "ذرت",           prefixes: ["110"] },
-    { key: "oil",    labelFa: "روغن",          prefixes: ["1204"] },
-    { key: "lime",   labelFa: "آهک",           prefixes: ["1522"] },
-    { key: "spice",  labelFa: "ادویه",         patterns: ["13***1****", "32***1****"] },
-    { key: "selfon", labelFa: "سلفون",         patterns: ["22***1****"] },
-    { key: "box",    labelFa: "کارتن",         patterns: ["21***1****"] },
-  ],
-  "2": [
-    { key: "corn",   labelFa: "ذرت پاپکورن",   prefixes: ["112"] },
-    { key: "oil",    labelFa: "روغن",          prefixes: ["1204"] },
-    { key: "lime",   labelFa: "آهک",           prefixes: ["1522"] },
-    { key: "spice",  labelFa: "ادویه",         patterns: ["13***2****", "32***2****"] },
-    { key: "selfon", labelFa: "سلفون",         patterns: ["22***2****"] },
-    { key: "box",    labelFa: "کارتن",         patterns: ["21***2****"] },
-  ],
-};
-
-type GroupKey = (typeof RAW_MATERIAL_GROUPS_BY_PRODUCT)["1"][number]["key"];
-type ShiftNum = 1 | 2 | 3;
-
-type Totals = Record<GroupKey, { shifts: Record<ShiftNum, number>; total: number }>;
-function initTotals(groups: typeof RAW_MATERIAL_GROUPS_BY_PRODUCT["1"]): Totals {
-  const base: any = {};
-  for (const g of groups) base[g.key] = { shifts: { 1: 0, 2: 0, 3: 0 }, total: 0 };
-  return base as Totals;
-}
-
-/* ---------------- pattern helpers ---------------- */
-function patternToRegex(p: string): RegExp {
-  // "13***1****" => ^13\d{3}1\d{4}$
-  const esc = p.replace(/([.*+?^${}()|\[\]\\])/g, "\\$1");
-  const rx = "^" + esc.replace(/\*/g, "\\d") + "$";
-  return new RegExp(rx);
-}
-function matchesAnyPattern(code: string, patterns: string[] | undefined): boolean {
-  if (!patterns?.length) return false;
-  const c = cleanCode(code) ?? "";
-  return patterns.some((p) => patternToRegex(p).test(c));
-}
-function startsWithAnyPrefix(code: string, prefixes: string[] | undefined): boolean {
-  if (!prefixes?.length) return false;
-  const c = cleanCode(code) ?? "";
-  return prefixes.some((pre) => c.startsWith(pre));
-}
-
-/** additional-spice matcher: 32xxx{product}xxxx  (10+ digits; index 5 is product) */
-function isSpiceFamily32(code: string, product: "1" | "2") {
+function isSpiceFamily32(code: string, product: ProductKey) {
   const c = cleanCode(code) ?? "";
   return c.startsWith("32") && c.length >= 6 && c[5] === product;
 }
-/** same flexible logic for 13-family spice: 13xxx{product}xxxx */
-function isSpiceFamily13(code: string, product: "1" | "2") {
-  const c = cleanCode(code) ?? "";
-  return c.startsWith("13") && c.length >= 6 && c[5] === product;
-}
-function isSpice(code: string, product: "1" | "2") {
-  return isSpiceFamily13(code, product) || isSpiceFamily32(code, product);
-}
 
-/* ---------------- payload item extraction ---------------- */
-function extractItemsFromPayload(p: any): { code?: string; qty: number }[] {
-  const raw = p?.raw_material ?? p?.rawMaterials ?? p?.mavadAvalieh;
+/* ---------- groups ---------- */
+const RAW_MATERIAL_GROUPS = [
+  { key: "corn",    labelFa: "ذرت / ذرت پاپکورن" },
+  { key: "oil",     labelFa: "روغن" },
+  { key: "lime",    labelFa: "آهک" },
+  { key: "spice",   labelFa: "ادویه" },
+  { key: "selfon",  labelFa: "سلفون" },
+  { key: "box",     labelFa: "کارتن" },
+] as const;
+type GroupKey = typeof RAW_MATERIAL_GROUPS[number]["key"];
+type ShiftNum = 1 | 2 | 3;
 
-  const amtRaw = p?.amount ?? p?.qty ?? p?.quantity ?? p?.value ?? p?.count;
-  const amt = typeof amtRaw === "string"
-    ? parseFloat(faToEnDigits(amtRaw).replace(/,/g, ""))
-    : Number(amtRaw);
-
-  if (typeof raw === "string" || typeof raw === "number") {
-    const code = cleanCode(raw);
-    const qty = Number.isFinite(amt) ? amt : 0;
-    return code && qty > 0 ? [{ code, qty }] : [];
-  }
-
-  if (Array.isArray(raw)) {
-    const items: { code?: string; qty: number }[] = [];
-    for (const r of raw) {
-      const rawCode =
-        r?.code ?? r?.kardexCode ?? r?.itemCode ??
-        r?.kardex?.code ?? r?.item?.code ??
-        (typeof r?.name === "string" && /^\d/.test(faToEnDigits(r.name)) ? r.name : undefined);
-
-      const code = cleanCode(rawCode);
-      const qRaw = r?.qty ?? r?.quantity ?? r?.amount ?? r?.count ?? r?.value ?? (typeof r === "number" ? r : undefined);
-      const qty = typeof qRaw === "string" ? parseFloat(faToEnDigits(qRaw).replace(/,/g, "")) : Number(qRaw);
-
-      if (code && Number.isFinite(qty) && qty !== 0) items.push({ code, qty });
-    }
-    return items;
-  }
-
-  if (raw && typeof raw === "object") {
-    return Object.entries(raw)
-      .map(([k, v]) => {
-        const code = cleanCode(k);
-        const qty = typeof v === "string" ? parseFloat(faToEnDigits(v).replace(/,/g, "")) : Number(v);
-        return { code, qty };
-      })
-      .filter((x) => x.code && Number.isFinite(x.qty) && x.qty !== 0);
-  }
-
-  return [];
-}
-
-/* ---------------- choose group (now with flexible spice) ---------------- */
-function matchGroupByCodeForProduct(
-  product: ProductKey,
-  code?: string
-): GroupKey | undefined {
-  const c = cleanCode(code);
-  if (!c) return;
-  const groups = RAW_MATERIAL_GROUPS_BY_PRODUCT[product];
-
-  // First: spice by flexible rule (13/32 families, index 5 == product)
-  if (isSpice(c, product)) return "spice";
-
-  // Then fall back to prefixes/patterns for other groups
-  for (const g of groups) {
-    if (g.key === "spice") continue; // already handled
-    if (startsWithAnyPrefix(c, g.prefixes) || matchesAnyPattern(c, g.patterns)) {
-      return g.key as GroupKey;
-    }
-  }
+function matchGroupByCode(code: string | undefined, product: ProductKey): GroupKey | undefined {
+  const s = cleanCode(code);
+  if (!s) return;
+  if (product === "1" && s.startsWith("110")) return "corn";
+  if (product === "2" && s.startsWith("112")) return "corn";
+  if (s.startsWith("1204")) return "oil";
+  if (s.startsWith("1522")) return "lime";
+  if (s.startsWith("13") && s.length >= 6 && s[5] === product) return "spice";
+  if (isSpiceFamily32(s, product)) return "spice";
+  if (s.startsWith("22") && s.length >= 6 && s[5] === product) return "selfon";
+  if (s.startsWith("21") && s.length >= 6 && s[5] === product) return "box";
   return;
 }
 
-/* ---------------- component ---------------- */
+type Totals = Record<GroupKey, { shifts: Record<ShiftNum, number>; total: number }>;
+function initTotals(): Totals {
+  return {
+    corn:   { shifts: {1:0,2:0,3:0}, total: 0 },
+    oil:    { shifts: {1:0,2:0,3:0}, total: 0 },
+    lime:   { shifts: {1:0,2:0,3:0}, total: 0 },
+    spice:  { shifts: {1:0,2:0,3:0}, total: 0 },
+    selfon: { shifts: {1:0,2:0,3:0}, total: 0 },
+    box:    { shifts: {1:0,2:0,3:0}, total: 0 },
+  };
+}
+
 export default async function RawMaterialsSection({
   date,
   hours = 24,
@@ -176,64 +84,82 @@ export default async function RawMaterialsSection({
   onlyConfirmed = true,
   product,
 }: Props) {
-  const wantedShifts = (Array.from(new Set(shifts)) as ShiftNum[]).filter((s): s is ShiftNum => [1, 2, 3].includes(s));
-  const GROUPS = RAW_MATERIAL_GROUPS_BY_PRODUCT[product];
-  const totals = initTotals(GROUPS);
+  const wantedShifts = (Array.from(new Set(shifts)) as ShiftNum[]).filter(
+    (s): s is ShiftNum => [1, 2, 3].includes(s)
+  );
+  const totals = initTotals();
 
-  // form 1031100 + robust product filters + payload.date
-  const entries = await prisma.formEntry.findMany({
+  const statusCond = onlyConfirmed ? { status: "finalConfirmed" as const } : {};
+
+  // + consumption (1031100)
+  const pos = await prisma.formEntry.findMany({
     where: {
+      ...statusCond,
       form: { code: "1031100" },
-      ...(onlyConfirmed ? { status: "finalConfirmed" } : {}),
       AND: [
-        {
-          OR: [
-            { payload: { path: ["date"], equals: date } },
-            { payload: { path: ["payloadDate"], equals: date } },
-            { payload: { path: ["tarikh"], equals: date } },
-            { payload: { path: ["payload", "date"], equals: date } },
-          ],
-        },
+        { payload: { path: ["date"], equals: date } },
         {
           OR: [
             { payload: { path: ["product"], equals: product } },
-            { payload: { path: ["product"], equals: Number(product) } },
-            { payload: { path: ["payload", "product"], equals: product } },
-            { payload: { path: ["payload", "product"], equals: Number(product) } },
+            { payload: { path: ["product"], equals: Number(product) } as any },
             { payload: { path: ["product", "value"], equals: product } },
-            { payload: { path: ["product", "value"], equals: Number(product) } },
+            { payload: { path: ["product", "value"], equals: Number(product) } as any },
           ],
         },
       ],
     },
     select: { id: true, payload: true, createdAt: true },
-    orderBy: { createdAt: "desc" },
+    orderBy: { createdAt: "asc" },
   });
 
-  // Defensive JS re-check of product value
-  const filtered = entries.filter((e) => {
-    const p: any = e.payload ?? {};
-    let v: any = p?.product ?? p?.payload?.product;
-    if (v && typeof v === "object") v = v.value ?? v.code ?? v.id ?? v.key;
-    const val = v != null ? String(v) : "";
-    return val === product || val === String(Number(product));
+  // − returns (1031000 with source=1)
+  const neg = await prisma.formEntry.findMany({
+    where: {
+      ...statusCond,
+      form: { code: "1031000" },
+      AND: [
+        { payload: { path: ["date"], equals: date } },
+        {
+          OR: [
+            { payload: { path: ["source"], equals: "1" } },
+            { payload: { path: ["source"], equals: 1 } as any },
+            { payload: { path: ["source", "value"], equals: "1" } },
+            { payload: { path: ["source", "value"], equals: 1 } as any },
+          ],
+        },
+        {
+          OR: [
+            { payload: { path: ["product"], equals: product } },
+            { payload: { path: ["product"], equals: Number(product) } as any },
+            { payload: { path: ["product", "value"], equals: product } },
+            { payload: { path: ["product", "value"], equals: Number(product) } as any },
+          ],
+        },
+      ],
+    },
+    select: { id: true, payload: true, createdAt: true },
+    orderBy: { createdAt: "asc" },
   });
 
-  for (const e of filtered) {
-    const p = (e.payload as any) ?? {};
+  function applyEntry(e: any, sign: 1 | -1) {
+    const p = (e.payload ?? {}) as any;
+    const code = cleanCode(p?.raw_material ?? p?.rawMaterials ?? p?.mavadAvalieh);
+    const amountAbs = parseAmount(p?.amount ?? p?.qty ?? p?.quantity ?? p?.value ?? p?.count);
+    if (!code || !Number.isFinite(amountAbs) || amountAbs === 0) return;
     const shift = parseShift(p?.shift ?? p?.workShift ?? p?.shiftNo);
-    if (!shift || !wantedShifts.includes(shift)) continue;
+    const g = matchGroupByCode(code, product);
+    if (!g) return;
 
-    const items = extractItemsFromPayload(p);
-    for (const it of items) {
-      const g = matchGroupByCodeForProduct(product, it.code);
-      if (!g) continue;
-      totals[g].shifts[shift] += it.qty;
-      totals[g].total += it.qty;
-    }
+    const amt = sign * amountAbs;
+    if (shift && wantedShifts.includes(shift)) totals[g].shifts[shift] += amt;
+    totals[g].total += amt;
   }
 
-  const hasAny = GROUPS.some(({ key }) => totals[key as GroupKey].total !== 0);
+  pos.forEach((e) => applyEntry(e, +1));
+  neg.forEach((e) => applyEntry(e, -1));
+
+  const hasAny = RAW_MATERIAL_GROUPS.some(({ key }) => totals[key].total !== 0);
+  const nf = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 3, minimumFractionDigits: 0 });
 
   return (
     <section className="w-full">
@@ -249,10 +175,10 @@ export default async function RawMaterialsSection({
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="min-w-[720px] w-full text-sm">
+              <table className="min-w-[720px] w-full text-sm text-center">
                 <thead className="bg-gray-50">
-                  <tr className="text-right">
-                    <th className="px-3 py-2">ماده اولیه</th>
+                  <tr>
+                    <th className="px-3 py-2 text-right">ماده اولیه</th>
                     <th className="px-3 py-2">شیفت ۱</th>
                     <th className="px-3 py-2">شیفت ۲</th>
                     <th className="px-3 py-2">شیفت ۳</th>
@@ -260,15 +186,15 @@ export default async function RawMaterialsSection({
                   </tr>
                 </thead>
                 <tbody>
-                  {GROUPS.map(({ key, labelFa }) => {
-                    const row = totals[key as GroupKey];
+                  {RAW_MATERIAL_GROUPS.map(({ key, labelFa }) => {
+                    const row = totals[key];
                     return (
                       <tr key={key} className="border-t">
-                        <td className="px-3 py-2 font-medium">{labelFa}</td>
-                        <td className="px-3 py-2">{fmtEn(row.shifts[1])}</td>
-                        <td className="px-3 py-2">{fmtEn(row.shifts[2])}</td>
-                        <td className="px-3 py-2">{fmtEn(row.shifts[3])}</td>
-                        <td className="px-3 py-2 font-semibold">{fmtEn(row.total)}</td>
+                        <td className="px-3 py-2 text-right font-medium">{labelFa}</td>
+                        <td className="px-3 py-2">{nf(row.shifts[1])}</td>
+                        <td className="px-3 py-2">{nf(row.shifts[2])}</td>
+                        <td className="px-3 py-2">{nf(row.shifts[3])}</td>
+                        <td className="px-3 py-2 font-semibold">{nf(row.total)}</td>
                       </tr>
                     );
                   })}

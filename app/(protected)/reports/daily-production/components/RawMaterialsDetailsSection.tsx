@@ -3,8 +3,8 @@ import { prisma } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
-// Accept product from the page: "1" (chips) | "2" (popcorn)
-type Props = { date: string; product: "1" | "2" };
+type ProductKey = "1" | "2";
+type Props = { date: string; product: ProductKey };
 
 /* -------------------- helpers -------------------- */
 function faToEnDigits(s: any): string {
@@ -57,87 +57,39 @@ function normalizeIsoDateLike(input: unknown): string | null {
   return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
 }
 
-/* -------------------- group definitions -------------------- */
-type GroupKey = "corn" | "oil" | "lime" | "spice" | "selfon" | "box";
-
-/** additional-spice matcher: 32xxx{product}xxxx  (10+ digits; index 5 is product) */
-function isSpiceFamily32(code: string, product: "1" | "2") {
-  // ensure we use only digits
+/** additional-spice matcher: 32xxx{product}xxxx (10+ digits; index 5 is product) */
+function isSpiceFamily32(code: string, product: ProductKey) {
   const c = cleanCode(code) ?? "";
   return c.startsWith("32") && c.length >= 6 && c[5] === product;
 }
 
-/** group matcher that depends on the chosen product (for 32… family) */
-function matchGroupByCode(code: string | undefined, product: "1" | "2"): GroupKey | undefined {
+/* -------------------- group definitions -------------------- */
+const GROUPS = [
+  { key: "corn",   labelFa: "ذرت / ذرت پاپکورن" },
+  { key: "oil",    labelFa: "روغن" },
+  { key: "lime",   labelFa: "آهک" },
+  { key: "spice",  labelFa: "ادویه" },
+  { key: "selfon", labelFa: "سلفون" },
+  { key: "box",    labelFa: "کارتن" },
+] as const;
+type GroupKey = typeof GROUPS[number]["key"];
+
+function matchGroupByCode(code: string | undefined, product: ProductKey): GroupKey | undefined {
   const s = cleanCode(code);
   if (!s) return;
-  if (s.startsWith("11") || s.startsWith("112") || s.startsWith("110")) return "corn";
+  // corn
+  if (product === "1" && s.startsWith("110")) return "corn";
+  if (product === "2" && s.startsWith("112")) return "corn";
+  // oil / lime
   if (s.startsWith("1204")) return "oil";
   if (s.startsWith("1522")) return "lime";
-  // spices: regular 13… + additional family 32xxx{product}xxxx
-  if (s.startsWith("13") || isSpiceFamily32(s, product)) return "spice";
-  if (s.startsWith("22")) return "selfon";
-  if (s.startsWith("21") || s.startsWith("2100")) return "box";
+  // spice (13…{product}… or 32…{product}…)
+  if (s.startsWith("13") && s.length >= 6 && s[5] === product) return "spice";
+  if (isSpiceFamily32(s, product)) return "spice";
+  // packaging (product-coded in 6th digit)
+  if (s.startsWith("22") && s.length >= 6 && s[5] === product) return "selfon";
+  if (s.startsWith("21") && s.length >= 6 && s[5] === product) return "box";
   return;
-}
-
-/* ----------- robust extractor: string | array | object-map + spice carriers ----------- */
-type Item = { code?: string; qty: number };
-
-function extractFromAny(raw: any, topAmt: number): Item[] {
-  if (!raw) return [];
-  if (typeof raw === "string" || typeof raw === "number") {
-    const code = cleanCode(raw);
-    return code ? [{ code, qty: topAmt }] : [];
-  }
-  if (Array.isArray(raw)) {
-    const out: Item[] = [];
-    for (const r of raw) {
-      const rawCode =
-        r?.code ?? r?.kardexCode ?? r?.itemCode ??
-        r?.raw_material ?? r?.material ??
-        r?.kardex?.code ?? r?.item?.code ??
-        (typeof r?.name === "string" && /^\d/.test(faToEnDigits(r.name)) ? r.name : undefined);
-      const code = cleanCode(rawCode);
-      const qty  = parseAmount(r?.amount ?? r?.qty ?? r?.quantity ?? r?.count ?? r?.value ?? topAmt);
-      if (code && Number.isFinite(qty) && qty !== 0) out.push({ code, qty });
-    }
-    return out;
-  }
-  if (raw && typeof raw === "object") {
-    return Object.entries(raw)
-      .map(([k, v]) => ({ code: cleanCode(k), qty: parseAmount(v) }))
-      .filter((x) => x.code && Number.isFinite(x.qty) && x.qty !== 0);
-  }
-  return [];
-}
-
-function extractItemsFromPayload(p: any): Item[] {
-  const topAmt = parseAmount(p?.amount ?? p?.qty ?? p?.quantity ?? p?.value ?? p?.count);
-
-  const carriers = [
-    p?.raw_material,
-    p?.rawMaterials,
-    p?.mavadAvalieh,
-    p?.materials,
-    p?.items,
-    p?.details,
-  ];
-  // sometimes recorded separately
-  const spiceCarriers = [p?.spice, p?.spices];
-
-  const all: Item[] = [];
-  for (const c of carriers) all.push(...extractFromAny(c, topAmt));
-  for (const c of spiceCarriers) all.push(...extractFromAny(c, topAmt));
-
-  // de-dup by code (sum)
-  const byCode = new Map<string, number>();
-  for (const it of all) {
-    const c = it.code;
-    if (!c) continue;
-    byCode.set(c, (byCode.get(c) ?? 0) + it.qty);
-  }
-  return [...byCode.entries()].map(([code, qty]) => ({ code, qty }));
 }
 
 /* -------------------- types -------------------- */
@@ -148,20 +100,56 @@ type TxnRow = {
   unitName?: string | null;        // from FixedInformation.title
   code: string;                    // raw material code
   nameFa?: string | null;          // from KardexItem.nameFa
-  amount: number;
+  amount: number;                  // may be negative for returns
   description?: string | null;
+  kind: "consume" | "return";      // 1031100 vs 1031000 (source=1)
 };
 
-/* -------------------- component -------------------- */
 export default async function RawMaterialsDetailsSection({ date, product }: Props) {
-  // IMPORTANT: now filter by payload.product === selected product ("1" or "2")
-  const entries = await prisma.formEntry.findMany({
+  // POSITIVE: 1031100
+  const consume = await prisma.formEntry.findMany({
     where: {
       form: { code: "1031100" },
       status: "finalConfirmed",
       AND: [
         { payload: { path: ["date"], equals: date } },
-        { payload: { path: ["product"], equals: product } },
+        {
+          OR: [
+            { payload: { path: ["product"], equals: product } },
+            { payload: { path: ["product"], equals: Number(product) } as any },
+            { payload: { path: ["product", "value"], equals: product } },
+            { payload: { path: ["product", "value"], equals: Number(product) } as any },
+          ],
+        },
+      ],
+    },
+    select: { id: true, payload: true, finalConfirmedAt: true, createdAt: true },
+    orderBy: { finalConfirmedAt: "asc" },
+  });
+
+  // NEGATIVE (returns): 1031000 with source == 1
+  const returns = await prisma.formEntry.findMany({
+    where: {
+      form: { code: "1031000" },
+      status: "finalConfirmed",
+      AND: [
+        { payload: { path: ["date"], equals: date } },
+        {
+          OR: [
+            { payload: { path: ["source"], equals: "1" } },
+            { payload: { path: ["source"], equals: 1 } as any },
+            { payload: { path: ["source", "value"], equals: "1" } },
+            { payload: { path: ["source", "value"], equals: 1 } as any },
+          ],
+        },
+        {
+          OR: [
+            { payload: { path: ["product"], equals: product } },
+            { payload: { path: ["product"], equals: Number(product) } as any },
+            { payload: { path: ["product", "value"], equals: product } },
+            { payload: { path: ["product", "value"], equals: Number(product) } as any },
+          ],
+        },
       ],
     },
     select: { id: true, payload: true, finalConfirmedAt: true, createdAt: true },
@@ -169,50 +157,44 @@ export default async function RawMaterialsDetailsSection({ date, product }: Prop
   });
 
   // Prepare group buckets
-  const groups = new Map<GroupKey, { labelFa: string; total: number; rows: TxnRow[] }>([
-    ["corn",   { labelFa: "ذرت",   total: 0, rows: [] }],
-    ["oil",    { labelFa: "روغن",  total: 0, rows: [] }],
-    ["lime",   { labelFa: "آهک",   total: 0, rows: [] }],
-    ["spice",  { labelFa: "ادویه", total: 0, rows: [] }],  // will include 13… and 32xxx{product}xxxx
-    ["selfon", { labelFa: "سلفون", total: 0, rows: [] }],
-    ["box",    { labelFa: "کارتن", total: 0, rows: [] }],
-  ]);
+  const groups = new Map<GroupKey, { labelFa: string; total: number; rows: TxnRow[] }>();
+  for (const g of GROUPS) groups.set(g.key, { labelFa: g.labelFa, total: 0, rows: [] });
 
   // Collect lookups
   const matCodes = new Set<string>();
   const unitCodes = new Set<string>();
 
-  // Fill buckets
-  for (const e of entries) {
-    const p = (e.payload as any) ?? {};
-    const payloadDate = normalizeIsoDateLike(p?.date) || date; // fallback to requested date
-    const dateFa = toJalali(payloadDate);
-    const shift = parseShift(p?.shift ?? p?.workShift ?? p?.shiftNo);
-    const unitCode = p?.unit ?? null;
-    if (unitCode) unitCodes.add(String(unitCode));
+  function maybePushRow(p: any, sign: 1 | -1, kind: "consume" | "return") {
+    const code = cleanCode(p?.raw_material ?? p?.rawMaterials ?? p?.mavadAvalieh);
+    const amountAbs = parseAmount(p?.amount ?? p?.qty ?? p?.quantity ?? p?.value ?? p?.count);
+    if (!code || !Number.isFinite(amountAbs) || amountAbs === 0) return;
 
-    const items = extractItemsFromPayload(p);
-    for (const it of items) {
-      const key = matchGroupByCode(it.code, product);
-      if (!key || !it.code) continue;
+    const key = matchGroupByCode(code, product);
+    if (!key) return;
 
-      const row: TxnRow = {
-        dateFa,
-        shift,
-        unitCode,
-        unitName: null,
-        code: it.code,
-        nameFa: null,
-        amount: it.qty,
-        description: p?.description ?? null,
-      };
+    const payloadDate = normalizeIsoDateLike(p?.date) || date;
+    const row: TxnRow = {
+      dateFa: toJalali(payloadDate),
+      shift: parseShift(p?.shift ?? p?.workShift ?? p?.shiftNo),
+      unitCode: p?.unit ?? null,
+      unitName: null,
+      code,
+      nameFa: null,
+      amount: sign * amountAbs, // ← sign applied here
+      description: p?.description ?? null,
+      kind,
+    };
 
-      matCodes.add(it.code);
-      const bucket = groups.get(key)!;
-      bucket.rows.push(row);
-      bucket.total += it.qty;
-    }
+    matCodes.add(code);
+    if (row.unitCode) unitCodes.add(String(row.unitCode));
+
+    const bucket = groups.get(key)!;
+    bucket.rows.push(row);
+    bucket.total += row.amount;
   }
+
+  for (const e of consume) maybePushRow((e.payload as any) ?? {}, +1, "consume");
+  for (const e of returns) maybePushRow((e.payload as any) ?? {}, -1, "return");
 
   // Look up raw material names in KardexItem
   if (matCodes.size) {
@@ -222,9 +204,7 @@ export default async function RawMaterialsDetailsSection({ date, product }: Prop
     });
     const nameMap = new Map(items.map((i) => [i.code, i.nameFa]));
     for (const g of groups.values()) {
-      for (const r of g.rows) {
-        r.nameFa = nameMap.get(r.code) ?? r.nameFa ?? null;
-      }
+      for (const r of g.rows) r.nameFa = nameMap.get(r.code) ?? r.nameFa ?? null;
     }
   }
 
@@ -242,27 +222,19 @@ export default async function RawMaterialsDetailsSection({ date, product }: Prop
     }
   }
 
-  // Keep only materials that have at least one row
-  const present = ([
-    { key: "corn",   labelFa: "ذرت" },
-    { key: "oil",    labelFa: "روغن" },
-    { key: "lime",   labelFa: "آهک" },
-    { key: "spice",  labelFa: "ادویه" },   // ← will show both 13… and 32xxx{product}xxxx
-    { key: "selfon", labelFa: "سلفون" },
-    { key: "box",    labelFa: "کارتن" },
-  ] as const)
+  // Keep only groups with rows
+  const present = GROUPS
     .map(({ key, labelFa }) => {
-      const bucket = groups.get(key as GroupKey)!;
+      const bucket = groups.get(key)!;
       return { key, labelFa, rows: bucket.rows, total: bucket.total };
     })
     .filter((g) => g.rows.length > 0);
 
   const nf = (n: number) =>
-    n.toLocaleString("en-US", { maximumFractionDigits: 3 });
+    n.toLocaleString("en-US", { maximumFractionDigits: 3, minimumFractionDigits: 0 });
 
   return (
     <section className="w-full">
-      {/* Title WITHOUT date */}
       <h2 className="text-xl font-bold mb-3">جزئیات تراکنش مواد اولیه</h2>
 
       {present.length === 0 ? (
@@ -290,7 +262,7 @@ export default async function RawMaterialsDetailsSection({ date, product }: Prop
                       <th className="px-3 py-2">کد ماده اولیه</th>
                       <th className="px-3 py-2">نام ماده اولیه</th>
                       <th className="px-3 py-2">مقدار</th>
-                      <th className="px-3 py-2">واحد</th>
+                      <th className="px-3 py-2">نوع</th>
                       <th className="px-3 py-2">توضیحات</th>
                     </tr>
                   </thead>
@@ -303,16 +275,16 @@ export default async function RawMaterialsDetailsSection({ date, product }: Prop
                         <td className="px-3 py-2" dir="ltr">{r.code}</td>
                         <td className="px-3 py-2">{r.nameFa ?? ""}</td>
                         <td className="px-3 py-2 font-medium">{nf(r.amount)}</td>
-                        <td className="px-3 py-2">{r.unitName ?? ""}</td>
+                        <td className="px-3 py-2">{r.kind === "return" ? "مرجوعی" : "مصرف"}</td>
                         <td className="px-3 py-2">{r.description ?? ""}</td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
                     <tr className="border-t bg-gray-50 font-semibold">
-                      <td className="px-3 py-2" colSpan={6}>جمع</td>
+                      <td className="px-3 py-2" colSpan={5}>جمع</td>
                       <td className="px-3 py-2">{nf(g.total)}</td>
-                      <td className="px-3 py-2"></td>
+                      <td className="px-3 py-2" colSpan={2}></td>
                     </tr>
                   </tfoot>
                 </table>

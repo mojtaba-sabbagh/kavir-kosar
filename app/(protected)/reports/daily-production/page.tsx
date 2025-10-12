@@ -8,8 +8,9 @@ import { CollapsiblePanelAdvanced } from "@/components/ui/CollapsiblePanelAdvanc
 import WasteDetailsSection from "./components/WasteDetailsSection";
 import WasteSummarySection from "./components/WasteSummarySection";
 import PauseDetailsSection from "./components/PauseDetailsSection";
+import PauseSummarySection from "./components/PauseSummarySection";
 import FinalSummarySection from "./components/FinalSummarySection";
-import type { ProductKey } from "@/lib/report-helpers"; // ✅ import the type
+import type { ProductKey } from "@/lib/report-helpers";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -70,6 +71,8 @@ export default async function DailyProductionPage({ searchParams }: { searchPara
             icon={<svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6M5 5h14a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2z" /></svg>}
           >
             <PauseDetailsSection date={date} product={product} />
+            <PauseSummarySection  date={date} product={product} hours={hours} />
+
           </CollapsiblePanelAdvanced>
 
           <CollapsiblePanelAdvanced /* جمع بندی */ title="جمع بندی" variant="accent" defaultOpen={false}

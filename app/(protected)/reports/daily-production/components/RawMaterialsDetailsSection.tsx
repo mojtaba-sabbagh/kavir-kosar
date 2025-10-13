@@ -57,36 +57,38 @@ function normalizeIsoDateLike(input: unknown): string | null {
   return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
 }
 
-/** additional-spice matcher: 32xxx{product}xxxx (10+ digits; index 5 is product) */
+
+/* -------------------- group definitions -------------------- */
+const GROUPS = [
+  { key: "corn",   labelFa: "ذرت",   },
+  { key: "oil",    labelFa: "روغن",  },
+  { key: "lime",   labelFa: "آهک",   },
+  { key: "spice",  labelFa: "ادویه", },
+  { key: "selfon", labelFa: "سلفون", },
+  { key: "box",    labelFa: "کارتن", },
+] as const;
+type GroupKey = typeof GROUPS[number]["key"];
+
+/** additional-spice matcher: 32xxx{product}xxxx  (10+ digits; index 5 is product) */
 function isSpiceFamily32(code: string, product: ProductKey) {
   const c = cleanCode(code) ?? "";
   return c.startsWith("32") && c.length >= 6 && c[5] === product;
 }
 
-/* -------------------- group definitions -------------------- */
-const GROUPS = [
-  { key: "corn",   labelFa: "ذرت / ذرت پاپکورن" },
-  { key: "oil",    labelFa: "روغن" },
-  { key: "lime",   labelFa: "آهک" },
-  { key: "spice",  labelFa: "ادویه" },
-  { key: "selfon", labelFa: "سلفون" },
-  { key: "box",    labelFa: "کارتن" },
-] as const;
-type GroupKey = typeof GROUPS[number]["key"];
-
+/** group matcher that depends on the chosen product (for 32… family) */
 function matchGroupByCode(code: string | undefined, product: ProductKey): GroupKey | undefined {
   const s = cleanCode(code);
   if (!s) return;
   // corn
   if (product === "1" && s.startsWith("110")) return "corn";
   if (product === "2" && s.startsWith("112")) return "corn";
-  // oil / lime
+  // oil
   if (s.startsWith("1204")) return "oil";
+  // lime
   if (s.startsWith("1522")) return "lime";
-  // spice (13…{product}… or 32…{product}…)
-  if (s.startsWith("13") && s.length >= 6 && s[5] === product) return "spice";
-  if (isSpiceFamily32(s, product)) return "spice";
-  // packaging (product-coded in 6th digit)
+  // spice (13***{product}**** OR 32***{product}****)
+  if ((s.startsWith("13") && s.length >= 6 && s[5] === product) || isSpiceFamily32(s, product)) return "spice";
+  // selfon / box families depend on product too
   if (s.startsWith("22") && s.length >= 6 && s[5] === product) return "selfon";
   if (s.startsWith("21") && s.length >= 6 && s[5] === product) return "box";
   return;
@@ -100,60 +102,40 @@ type TxnRow = {
   unitName?: string | null;        // from FixedInformation.title
   code: string;                    // raw material code
   nameFa?: string | null;          // from KardexItem.nameFa
-  amount: number;                  // may be negative for returns
+  amount: number;                  // NEGATIVE for returns
   description?: string | null;
-  kind: "consume" | "return";      // 1031100 vs 1031000 (source=1)
+  source?: string | null;          // to flag returns (source=1 in 1031000)
 };
 
+/* -------------------- component -------------------- */
 export default async function RawMaterialsDetailsSection({ date, product }: Props) {
-  // POSITIVE: 1031100
-  const consume = await prisma.formEntry.findMany({
+  // POSITIVE consumption from 1031100, filtered by payload.date & payload.product
+  const pos = await prisma.formEntry.findMany({
     where: {
       form: { code: "1031100" },
       status: "finalConfirmed",
       AND: [
         { payload: { path: ["date"], equals: date } },
-        {
-          OR: [
-            { payload: { path: ["product"], equals: product } },
-            { payload: { path: ["product"], equals: Number(product) } as any },
-            { payload: { path: ["product", "value"], equals: product } },
-            { payload: { path: ["product", "value"], equals: Number(product) } as any },
-          ],
-        },
+        { payload: { path: ["product"], equals: product } },
       ],
     },
     select: { id: true, payload: true, finalConfirmedAt: true, createdAt: true },
     orderBy: { finalConfirmedAt: "asc" },
   });
 
-  // NEGATIVE (returns): 1031000 with source == 1
-  const returns = await prisma.formEntry.findMany({
+  // NEGATIVE returns from 1031000 (source=1), filtered by payload.date.
+  // Product filter is applied *only if present on the payload* (if absent, we include it).
+  const neg = await prisma.formEntry.findMany({
     where: {
       form: { code: "1031000" },
       status: "finalConfirmed",
       AND: [
         { payload: { path: ["date"], equals: date } },
-        {
-          OR: [
-            { payload: { path: ["source"], equals: "1" } },
-            { payload: { path: ["source"], equals: 1 } as any },
-            { payload: { path: ["source", "value"], equals: "1" } },
-            { payload: { path: ["source", "value"], equals: 1 } as any },
-          ],
-        },
-        {
-          OR: [
-            { payload: { path: ["product"], equals: product } },
-            { payload: { path: ["product"], equals: Number(product) } as any },
-            { payload: { path: ["product", "value"], equals: product } },
-            { payload: { path: ["product", "value"], equals: Number(product) } as any },
-          ],
-        },
+        { payload: { path: ["source"], equals: "1" } },
       ],
     },
-    select: { id: true, payload: true, finalConfirmedAt: true, createdAt: true },
-    orderBy: { finalConfirmedAt: "asc" },
+    select: { id: true, payload: true },
+    orderBy: { id: "asc" },
   });
 
   // Prepare group buckets
@@ -164,25 +146,33 @@ export default async function RawMaterialsDetailsSection({ date, product }: Prop
   const matCodes = new Set<string>();
   const unitCodes = new Set<string>();
 
-  function maybePushRow(p: any, sign: 1 | -1, kind: "consume" | "return") {
+  const pushRow = (p: any, sign: 1 | -1) => {
     const code = cleanCode(p?.raw_material ?? p?.rawMaterials ?? p?.mavadAvalieh);
     const amountAbs = parseAmount(p?.amount ?? p?.qty ?? p?.quantity ?? p?.value ?? p?.count);
     if (!code || !Number.isFinite(amountAbs) || amountAbs === 0) return;
 
+    // product filter: required for positives; for negatives, include if product is missing OR matches
+    const prodInPayload = p?.product != null ? String(p.product) : undefined;
+    if (sign === 1) {
+      if (prodInPayload && prodInPayload !== product) return;
+    } else if (sign === -1) {
+      if (prodInPayload && prodInPayload !== product) return; // keep if absent, filter if present & mismatched
+    }
+
     const key = matchGroupByCode(code, product);
     if (!key) return;
 
-    const payloadDate = normalizeIsoDateLike(p?.date) || date;
+    const payloadDate = normalizeIsoDateLike(p?.date) || date; // fallback to requested date
     const row: TxnRow = {
       dateFa: toJalali(payloadDate),
       shift: parseShift(p?.shift ?? p?.workShift ?? p?.shiftNo),
       unitCode: p?.unit ?? null,
-      unitName: null,
+      unitName: null, // to be filled after lookup
       code,
-      nameFa: null,
-      amount: sign * amountAbs, // ← sign applied here
+      nameFa: null,   // to be filled after lookup
+      amount: sign * amountAbs,
       description: p?.description ?? null,
-      kind,
+      source: p?.source ?? null,
     };
 
     matCodes.add(code);
@@ -191,10 +181,11 @@ export default async function RawMaterialsDetailsSection({ date, product }: Prop
     const bucket = groups.get(key)!;
     bucket.rows.push(row);
     bucket.total += row.amount;
-  }
+  };
 
-  for (const e of consume) maybePushRow((e.payload as any) ?? {}, +1, "consume");
-  for (const e of returns) maybePushRow((e.payload as any) ?? {}, -1, "return");
+  // Fill buckets
+  for (const e of pos) pushRow((e.payload as any) ?? {}, 1);
+  for (const e of neg) pushRow((e.payload as any) ?? {}, -1);
 
   // Look up raw material names in KardexItem
   if (matCodes.size) {
@@ -216,13 +207,11 @@ export default async function RawMaterialsDetailsSection({ date, product }: Prop
     });
     const unitMap = new Map(infos.map((u) => [u.code, u.title]));
     for (const g of groups.values()) {
-      for (const r of g.rows) {
-        if (r.unitCode) r.unitName = unitMap.get(String(r.unitCode)) ?? String(r.unitCode);
-      }
+      for (const r of g.rows) if (r.unitCode) r.unitName = unitMap.get(String(r.unitCode)) ?? String(r.unitCode);
     }
   }
 
-  // Keep only groups with rows
+  // Keep only materials that have at least one row
   const present = GROUPS
     .map(({ key, labelFa }) => {
       const bucket = groups.get(key)!;
@@ -230,11 +219,11 @@ export default async function RawMaterialsDetailsSection({ date, product }: Prop
     })
     .filter((g) => g.rows.length > 0);
 
-  const nf = (n: number) =>
-    n.toLocaleString("en-US", { maximumFractionDigits: 3, minimumFractionDigits: 0 });
+  const nf = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 3 });
 
   return (
     <section className="w-full">
+      {/* Title without date, per your request */}
       <h2 className="text-xl font-bold mb-3">جزئیات تراکنش مواد اولیه</h2>
 
       {present.length === 0 ? (
@@ -247,8 +236,9 @@ export default async function RawMaterialsDetailsSection({ date, product }: Prop
             <div key={g.key} className="border rounded-lg">
               <div className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-t-lg">
                 <div className="font-semibold">{g.labelFa}</div>
-                <div className="text-sm">
-                  جمع مقدار: <span className="font-bold">{nf(g.total)}</span>
+                <div className="text-sm" dir="ltr">
+                  جمع مقدار:{" "}
+                  <span className="font-bold">{nf(g.total)}</span>
                 </div>
               </div>
 
@@ -259,10 +249,9 @@ export default async function RawMaterialsDetailsSection({ date, product }: Prop
                       <th className="px-3 py-2">#</th>
                       <th className="px-3 py-2">تاریخ</th>
                       <th className="px-3 py-2">شیفت</th>
-                      <th className="px-3 py-2">کد ماده اولیه</th>
+                      <th className="px-3 py-2">کد ماذه اولیه</th>
                       <th className="px-3 py-2">نام ماده اولیه</th>
                       <th className="px-3 py-2">مقدار</th>
-                      <th className="px-3 py-2">نوع</th>
                       <th className="px-3 py-2">توضیحات</th>
                     </tr>
                   </thead>
@@ -274,17 +263,20 @@ export default async function RawMaterialsDetailsSection({ date, product }: Prop
                         <td className="px-3 py-2">{r.shift ?? ""}</td>
                         <td className="px-3 py-2" dir="ltr">{r.code}</td>
                         <td className="px-3 py-2">{r.nameFa ?? ""}</td>
-                        <td className="px-3 py-2 font-medium">{nf(r.amount)}</td>
-                        <td className="px-3 py-2">{r.kind === "return" ? "مرجوعی" : "مصرف"}</td>
-                        <td className="px-3 py-2">{r.description ?? ""}</td>
+                        <td className={`px-3 py-2 font-medium ${r.amount < 0 ? "text-red-600" : ""}`} dir="ltr">
+                          {nf(r.amount)}
+                        </td>
+                        <td className="px-3 py-2">
+                          {r.source === "1" ? (r.description ? `برگشت: ${r.description}` : "برگشت") : (r.description ?? "")}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
                     <tr className="border-t bg-gray-50 font-semibold">
                       <td className="px-3 py-2" colSpan={5}>جمع</td>
-                      <td className="px-3 py-2">{nf(g.total)}</td>
-                      <td className="px-3 py-2" colSpan={2}></td>
+                      <td className="px-3 py-2" dir="ltr">{nf(g.total)}</td>
+                      <td className="px-3 py-2"></td>
                     </tr>
                   </tfoot>
                 </table>

@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 type ProductKey = "1" | "2";
 type Props = { date: string; product: ProductKey };
 
-/* ------------------ tiny utils ------------------ */
+/* ---------------- utils ---------------- */
 function pick<T = any>(o: any, paths: string[], def?: any): T | undefined {
   for (const p of paths) {
     const val = p.split(".").reduce((acc: any, k) => (acc ? acc[k] : undefined), o);
@@ -22,22 +22,30 @@ function amountOf(v: any): number {
 function codeFromAny(v: any): string {
   if (v == null) return "";
   if (typeof v === "object") {
-    const raw = v.code ?? v.value ?? v.id ?? v.key ?? v.kardexCode ?? v.itemCode ?? v.name;
+    const raw = v.code ?? v.value ?? v.id ?? v.key ?? v.kardexCode ?? v.itemCode;
     return raw ? String(raw) : "";
   }
   return String(v);
 }
-const nfEn = (n: number) =>
-  n.toLocaleString("en-US", { maximumFractionDigits: 3, minimumFractionDigits: 0 });
+const PRODUCT_LABEL: Record<ProductKey, string> = { "1": "چیپس", "2": "پاپکورن" };
 
-/* ----------- map form codes -> formIds, fetch entries by payload.date ----------- */
+/** 32xxx{product}xxxx — the 6th digit (index 5) encodes product 1/2 */
+function isSpiceFamily32(code: string, product: ProductKey) {
+  const c = (code || "").replace(/[^\d]/g, "");
+  return c.startsWith("32") && c.length >= 6 && c[5] === product;
+}
+/** 13***{product}**** */
+function isSpiceFamily13(code: string, product: ProductKey) {
+  const c = (code || "").replace(/[^\d]/g, "");
+  return c.startsWith("13") && c.length >= 6 && c[5] === product;
+}
+
+/* ----------- map form codes -> ids, fetch entries by payload.date ----------- */
 async function getFormIdsByCodes(codes: string[]) {
-  const forms = await prisma.form.findMany({
-    where: { code: { in: codes } },
-    select: { id: true, code: true },
-  });
+  const forms = await prisma.form.findMany({ where: { code: { in: codes } }, select: { id: true, code: true } });
   return new Map(forms.map((f) => [f.code, f.id]));
 }
+
 async function getEntriesByDate(formIds: string[], date: string) {
   if (!formIds.length) return [];
   return prisma.formEntry.findMany({
@@ -55,108 +63,121 @@ async function getEntriesByDate(formIds: string[], date: string) {
   });
 }
 
-/* ---------------- product-aware family helpers ---------------- */
-function isCorn(code: string, product: ProductKey) {
-  // chips: 110…, popcorn: 112…
-  return product === "1" ? code.startsWith("110") : code.startsWith("112");
-}
-function isOil(code: string) {
-  return code.startsWith("1204");
-}
-/** spice: 13***{product}****  (6th digit = product) */
-function isSpiceFamily13(code: string, product: ProductKey) {
-  return code.startsWith("13") && code.length >= 6 && code[5] === product;
-}
-/** additional spice: 32***{product}****  (6th digit = product) */
-function isSpiceFamily32(code: string, product: ProductKey) {
-  return code.startsWith("32") && code.length >= 6 && code[5] === product;
-}
-function isSpice(code: string, product: ProductKey) {
-  return isSpiceFamily13(code, product) || isSpiceFamily32(code, product);
-}
-/** product lines: chips→41…, popcorn→42… */
-function isProductCode(code: string, product: ProductKey) {
-  return product === "1" ? code.startsWith("41") : code.startsWith("42");
-}
-
-/* ------------------ optional names/weights from Kardex ------------------ */
-async function fetchKardexExtras(codes: string[]) {
-  if (!codes.length) return new Map<string, { nameFa?: string | null; weight?: number }>();
+/** kardex weights (per code); default 1 if not present */
+async function fetchWeightsForCodes(codes: string[]): Promise<Map<string, number>> {
+  if (!codes.length) return new Map();
   const items = await prisma.kardexItem.findMany({
     where: { code: { in: Array.from(new Set(codes)) } },
-    select: { code: true, nameFa: true, extra: true },
+    select: { code: true, extra: true },
   });
-  const m = new Map<string, { nameFa?: string | null; weight?: number }>();
+  const m = new Map<string, number>();
   for (const it of items) {
     const w = Number((it as any)?.extra?.weight);
-    m.set(it.code, {
-      nameFa: it.nameFa ?? null,
-      weight: Number.isFinite(w) ? w : undefined,
-    });
+    m.set(it.code, Number.isFinite(w) && w > 0 ? w : 1);
   }
   return m;
 }
 
-/* --------------------------------- Component ---------------------------------- */
 export default async function FinalSummarySection({ date, product }: Props) {
-  // Form ids
-  const idsMap = await getFormIdsByCodes(["1031100", "1031000", "1020600"]);
-  const rawsFormId    = idsMap.get("1031100") ?? ""; // positives (consumption)
-  const ioFormId      = idsMap.get("1031000") ?? ""; // BOTH returns (source=1) and products
-  const remainFormId  = idsMap.get("1020600") ?? "";
+  const ids = await getFormIdsByCodes(["1031100", "1031000", "1020600"]);
+  const frmRaws = ids.get("1031100") ?? "";
+  const frmReturns = ids.get("1031000") ?? ""; // used both for returns (source=1) and outputs (product weight)
+  const frmRemain = ids.get("1020600") ?? "";
 
-  // Fetch entries
-  const [raws, io, remains] = await Promise.all([
-    getEntriesByDate(rawsFormId ? [rawsFormId] : [], date),
-    getEntriesByDate(ioFormId ? [ioFormId] : [], date),
-    getEntriesByDate(remainFormId ? [remainFormId] : [], date),
+  const [rawsPlus, returnsAll, remains, outputs] = await Promise.all([
+    // + raw consumptions (filter by product)
+    getEntriesByDate(frmRaws ? [frmRaws] : [], date),
+    // returns & all 1031000 rows (we'll split by source later)
+    getEntriesByDate(frmReturns ? [frmReturns] : [], date),
+    getEntriesByDate(frmRemain ? [frmRemain] : [], date),
+    // same as returnsAll; we already fetched 1031000 above, avoid second roundtrip
+    Promise.resolve([] as any[]),
   ]);
+  // reuse 1031000 rows
+  const rows1031000 = returnsAll;
 
-  /* ---------------- RAW MATERIALS (with product filter) ---------------- */
-  let cornConsumedKg = 0;
-  let oilCans = 0;
-  let spicesConsumedKgTotal = 0;
-  const spicesByCode = new Map<string, number>();
+  /* ---------------- raw materials (net) with product filter ---------------- */
+  // plus (1031100, product filter)
+  let cornPlus = 0;
+  let oilPlusByCode = new Map<string, number>();
+  let limePlus = 0;
+  let spicesPlusByCode = new Map<string, number>();
 
-  // + from 1031100
-  for (const e of raws) {
+  for (const e of rawsPlus) {
     const v = (e.payload ?? {}) as any;
-    const pval = String(pick(v, ["product", "payload.product"], "")) || "";
+    // enforce product on raws
+    const pval = String(pick(v, ["product"], ""));
     if (pval !== product) continue;
 
     const code = codeFromAny(v.raw_material ?? v.rawMaterial ?? v.material ?? v.code);
     const amt = amountOf(v);
     if (!code || !amt) continue;
 
-    if (isCorn(code, product)) cornConsumedKg += amt;
-    else if (isOil(code)) oilCans += amt;
-    else if (isSpice(code, product)) {
-      spicesConsumedKgTotal += amt;
-      spicesByCode.set(code, (spicesByCode.get(code) ?? 0) + amt);
+    if (code === "1101000001" || code.startsWith(product === "1" ? "110" : "112")) cornPlus += amt;
+    if (code.startsWith("1204")) oilPlusByCode.set(code, (oilPlusByCode.get(code) ?? 0) + amt);
+    if (code === "1522000001" || code.startsWith("1522")) limePlus += amt;
+
+    if (isSpiceFamily13(code, product) || isSpiceFamily32(code, product)) {
+      spicesPlusByCode.set(code, (spicesPlusByCode.get(code) ?? 0) + amt);
     }
   }
 
-  // − returns from 1031000 where source == 1 (still filter by product)
-  for (const e of io) {
-    const v = (e.payload ?? {}) as any;
-    const src = String(pick(v, ["source", "payload.source"], "")) || "";
-    if (src !== "1") continue; // only returns
-    const pval = String(pick(v, ["product", "payload.product"], "")) || "";
-    if (pval !== product) continue;
+  // minus (1031000, source=1, product filter) — treat as returns
+  let cornMinus = 0;
+  let oilMinusByCode = new Map<string, number>();
+  let limeMinus = 0;
+  let spicesMinusByCode = new Map<string, number>();
 
-    const code = codeFromAny(v.raw_material ?? v.rawMaterial ?? v.material ?? v.code);
-    const amt = amountOf(v);
-    if (!code || !amt) continue;
+  // - returns from 1031000 where source=1
+for (const e of rows1031000) {
+  const v = (e.payload ?? {}) as any;
 
-    if (isCorn(code, product)) cornConsumedKg -= amt;
-    else if (isOil(code)) oilCans -= amt;
-    else if (isSpice(code, product)) {
-      spicesConsumedKgTotal -= amt;
-      spicesByCode.set(code, (spicesByCode.get(code) ?? 0) - amt);
-    }
+  // must be a return
+  const src = pick(v, ["source"], "");
+  if (!(src === "1" || src === 1)) continue;
+
+  // product filter: only apply if payload.product exists and differs
+  const prodVal = pick(v, ["product"], undefined);
+  if (prodVal != null && String(prodVal) !== product) continue;
+
+  const code = codeFromAny(v.raw_material ?? v.rawMaterial ?? v.material ?? v.code);
+  const amt  = amountOf(v);
+  if (!code || !amt) continue;
+
+  // subtract from raws
+  if (code === "1101000001" || (product === "1" ? code.startsWith("110") : code.startsWith("112"))) {
+    cornMinus += amt;
   }
+  if (code.startsWith("1204")) {
+    oilMinusByCode.set(code, (oilMinusByCode.get(code) ?? 0) + amt);
+  }
+  if (code === "1522000001" || code.startsWith("1522")) {
+    limeMinus += amt;
+  }
+  if (isSpiceFamily13(code, product) || isSpiceFamily32(code, product)) {
+    spicesMinusByCode.set(code, (spicesMinusByCode.get(code) ?? 0) + amt);
+  }
+}
 
-  // remained corn
+
+  // net raws (apply minus)
+  const cornConsumedKg = Math.max(0, cornPlus - cornMinus);
+  const limeConsumedKgRaw = Math.max(0, limePlus - limeMinus);
+  // net oil cans by code
+  const allOilCodes = Array.from(new Set([...oilPlusByCode.keys(), ...oilMinusByCode.keys()]));
+  const netOilCansByCode = new Map<string, number>();
+  for (const c of allOilCodes) {
+    netOilCansByCode.set(c, (oilPlusByCode.get(c) ?? 0) - (oilMinusByCode.get(c) ?? 0));
+  }
+  // net spices by code
+  const allSpiceCodes = Array.from(new Set([...spicesPlusByCode.keys(), ...spicesMinusByCode.keys()]));
+  const netSpicesByCode = new Map<string, number>();
+  for (const c of allSpiceCodes) {
+    netSpicesByCode.set(c, (spicesPlusByCode.get(c) ?? 0) - (spicesMinusByCode.get(c) ?? 0));
+  }
+  const spicesConsumedKgTotal = [...netSpicesByCode.values()].reduce((s, x) => s + (x || 0), 0);
+
+  // remained corn from 1020600: payload.remaining_corn
   let remainedCornKg = 0;
   for (const e of remains) {
     const v = (e.payload ?? {}) as any;
@@ -165,76 +186,55 @@ export default async function FinalSummarySection({ date, product }: Props) {
     );
   }
 
-  /* ---------------- PRODUCTS (from 1031000 ONLY; no product filter) ---------------- */
-  // For selected product, include only the corresponding product-code family (41/42)
+  /* ---------------- product weight (outputs) — 1031000 only, NO product filter ---------------- */
+  // Per your rule: chips => 41…, popcorn => 42…
+  const productPrefix = product === "1" ? "41" : "42";
+  const productItemsByCode = new Map<string, { count: number }>();
   const productCodes: string[] = [];
-  let productWeightKg = 0;
 
-  for (const e of io) {
+  for (const e of rows1031000) {
     const v = (e.payload ?? {}) as any;
     const code = codeFromAny(v.raw_material ?? v.rawMaterial ?? v.material ?? v.code);
     const amt = amountOf(v);
     if (!code || !amt) continue;
-
-    if (isProductCode(code, product)) {
+    if (code.startsWith(productPrefix)) {
+      productItemsByCode.set(code, { count: (productItemsByCode.get(code)?.count ?? 0) + amt });
       productCodes.push(code);
     }
   }
 
-  // get per-unit weights for product codes (fallback 1)
-  const prodExtras = await fetchKardexExtras(productCodes);
-  for (const e of io) {
-    const v = (e.payload ?? {}) as any;
-    const code = codeFromAny(v.raw_material ?? v.rawMaterial ?? v.material ?? v.code);
-    const amt = amountOf(v);
-    if (!code || !amt) continue;
+  // fetch per-unit weights for output products + oil cans
+  const weightCodes = Array.from(new Set([...productCodes, ...allOilCodes]));
+  const weights = await fetchWeightsForCodes(weightCodes);
 
-    if (isProductCode(code, product)) {
-      const w = prodExtras.get(code)?.weight ?? 1;
-      productWeightKg += amt * w;
-    }
+  // product weight in kg
+  let productWeightKg = 0;
+  for (const [c, { count }] of productItemsByCode.entries()) {
+    const w = weights.get(c) ?? 1; // default 1 if missing
+    productWeightKg += count * w;
   }
 
-  /* ---------------- oil kg (convert cans -> kg) ---------------- */
-  // Fetch oil can weights (1204…) and convert to kg
-  const oilCodes = ["1204"]; // we’ll match by startsWith when applying map
-  const oilExtras = await fetchKardexExtras(oilCodes);
-  // If there are multiple 1204 SKUs, you can expand to collect exact codes above.
-  const perCanWeight = (() => {
-    // try to find a 1204* code weight if present
-    for (const [code, ex] of oilExtras) {
-      if (code.startsWith("1204") && ex?.weight) return ex.weight!;
-    }
-    return 1; // fallback
-  })();
-  const oilKg = oilCans * perCanWeight;
+  // oil in kg (convert each code by its own weight)
+  let oilKg = 0;
+  console.log(netOilCansByCode);
+  for (const [c, cans] of netOilCansByCode.entries()) {
+    const w = weights.get(c) ?? 1;
+    oilKg += cans * w;
+  }
 
-  /* ---------------- lime default (1% of corn weight) ---------------- */
-  const limeConsumedKg = cornConsumedKg > 0 ? cornConsumedKg * 0.01 : 0;
+  // lime: if none recorded, default to 1% of corn
+  const limeConsumedKg = limeConsumedKgRaw > 0 ? limeConsumedKgRaw : cornConsumedKg * 0.01;
 
   /* ---------------- percentages ---------------- */
   const productPct = cornConsumedKg > 0 ? (productWeightKg / cornConsumedKg) * 100 : 0;
   const oilPct = productWeightKg > 0 ? (oilKg / productWeightKg) * 100 : 0;
 
-  /* ---------------- per-spice breakdown (names optional) ---------------- */
-  const spiceCodes = Array.from(spicesByCode.keys()).filter((c) => (spicesByCode.get(c) ?? 0) !== 0);
-  const spiceExtras = await fetchKardexExtras(spiceCodes);
-  const spiceRows = spiceCodes
-    .map((code) => {
-      const kg = spicesByCode.get(code) ?? 0;
-      const pct = productWeightKg > 0 ? (kg / productWeightKg) * 100 : 0;
-      const label = spiceExtras.get(code)?.nameFa ?? code;
-      return { code, label, kg, pct };
-    })
-    .sort((a, b) => a.label.localeCompare(b.label, "fa"));
+  const nf = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 3 });
 
-  const productLabel = product === "1" ? "چیپس" : "پاپکورن";
-
-  // render
   return (
     <div className="rounded-lg border border-gray-200 bg-white">
       <div className="border-b border-gray-200 px-4 py-3 font-semibold text-gray-900">
-        {`جمع بندی – ${productLabel}`}
+        جمع بندی – {PRODUCT_LABEL[product]}
       </div>
 
       <div className="p-4 space-y-6">
@@ -249,63 +249,68 @@ export default async function FinalSummarySection({ date, product }: Props) {
           <tbody className="divide-y divide-gray-100 bg-white">
             <tr>
               <td className="px-3 py-2">ذرت مصرفی (کیلوگرم)</td>
-              <td className="px-3 py-2 text-left">{nfEn(cornConsumedKg)}</td>
+              <td className="px-3 py-2 text-left">{nf(cornConsumedKg)}</td>
             </tr>
             <tr>
               <td className="px-3 py-2">ذرت باقیمانده (کیلوگرم)</td>
-              <td className="px-3 py-2 text-left">{nfEn(remainedCornKg)}</td>
+              <td className="px-3 py-2 text-left">{nf(remainedCornKg)}</td>
             </tr>
             <tr>
               <td className="px-3 py-2">ادویه مصرفی (کیلوگرم)</td>
-              <td className="px-3 py-2 text-left">{nfEn(spicesConsumedKgTotal)}</td>
+              <td className="px-3 py-2 text-left">{nf(spicesConsumedKgTotal)}</td>
             </tr>
             <tr>
               <td className="px-3 py-2">روغن مصرفی (کیلوگرم)</td>
-              <td className="px-3 py-2 text-left">{nfEn(oilKg)}</td>
+              <td className="px-3 py-2 text-left">{nf(oilKg)}</td>
             </tr>
             <tr>
               <td className="px-3 py-2">وزن محصول (کیلوگرم)</td>
-              <td className="px-3 py-2 text-left">{nfEn(productWeightKg)}</td>
+              <td className="px-3 py-2 text-left">{nf(productWeightKg)}</td>
             </tr>
             <tr>
               <td className="px-3 py-2">درصد محصول</td>
-              <td className="px-3 py-2 text-left">{cornConsumedKg > 0 ? `${productPct.toFixed(2)}` : "—"}</td>
+              <td className="px-3 py-2 text-left">{productWeightKg > 0 && cornConsumedKg > 0 ? `${productPct.toFixed(2)}%` : "—"}</td>
             </tr>
             <tr>
               <td className="px-3 py-2">درصد روغن</td>
-              <td className="px-3 py-2 text-left">{productWeightKg > 0 ? `${oilPct.toFixed(2)}` : "—"}</td>
+              <td className="px-3 py-2 text-left">{productWeightKg > 0 ? `${oilPct.toFixed(2)}%` : "—"}</td>
             </tr>
             <tr>
               <td className="px-3 py-2">آهک مصرفی (کیلوگرم)</td>
-              <td className="px-3 py-2 text-left">{nfEn(limeConsumedKg)}</td>
+              <td className="px-3 py-2 text-left">{nf(limeConsumedKg)}</td>
             </tr>
           </tbody>
         </table>
 
-        {/* Per-spice breakdown */}
+        {/* Per-spice breakdown (kg and % of product) */}
         <div>
           <div className="mb-2 font-medium text-gray-900">سهم ادویه‌ها از وزن محصول</div>
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-white">
               <tr>
-                <th className="px-3 py-2 text-right text-sm font-medium text-gray-900">ادویه</th>
+                <th className="px-3 py-2 text-right text-sm font-medium text-gray-900">ادویه (کد)</th>
                 <th className="px-3 py-2 text-left text-sm font-medium text-gray-900">مصرف (کیلوگرم)</th>
                 <th className="px-3 py-2 text-left text-sm font-medium text-gray-900">% نسبت به وزن محصول</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 bg-white">
-              {spiceRows.length === 0 ? (
+              {Array.from(netSpicesByCode.entries()).length === 0 ? (
                 <tr>
                   <td colSpan={3} className="px-3 py-3 text-center text-gray-500">داده‌ای ثبت نشده است</td>
                 </tr>
               ) : (
-                spiceRows.map((s) => (
-                  <tr key={s.code}>
-                    <td className="px-3 py-2">{s.label}</td>
-                    <td className="px-3 py-2 text-left">{nfEn(s.kg)}</td>
-                    <td className="px-3 py-2 text-left">{productWeightKg > 0 ? `${s.pct.toFixed(2)}` : "—"}</td>
-                  </tr>
-                ))
+                Array.from(netSpicesByCode.entries())
+                  .sort(([a], [b]) => a.localeCompare(b))
+                  .map(([code, kg]) => {
+                    const pct = productWeightKg > 0 ? (kg / productWeightKg) * 100 : 0;
+                    return (
+                      <tr key={code}>
+                        <td className="px-3 py-2" dir="ltr">{code}</td>
+                        <td className="px-3 py-2 text-left">{nf(kg)}</td>
+                        <td className="px-3 py-2 text-left">{productWeightKg > 0 ? `${pct.toFixed(2)}%` : "—"}</td>
+                      </tr>
+                    );
+                  })
               )}
             </tbody>
           </table>

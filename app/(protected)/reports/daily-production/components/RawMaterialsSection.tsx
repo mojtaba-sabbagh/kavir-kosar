@@ -184,7 +184,7 @@ export default async function RawMaterialsSection({
             <div className="overflow-x-auto">
               <table className="min-w-[720px] w-full text-sm">
                 <thead className="bg-gray-50">
-                  <tr className="text-right">
+                  <tr className="text-center">
                     <th className="px-3 py-2">ماده اولیه</th>
                     <th className="px-3 py-2">شیفت ۱</th>
                     <th className="px-3 py-2">شیفت ۲</th>
@@ -196,7 +196,7 @@ export default async function RawMaterialsSection({
                   {GROUPS.map(({ key, labelFa }) => {
                     const row = totals[key];
                     return (
-                      <tr key={key} className="border-t">
+                      <tr key={key} className="border-t text-center">
                         <td className="px-3 py-2 font-medium">{labelFa}</td>
                         <td className={`px-3 py-2 ${row.shifts[1] < 0 ? "text-red-600" : ""}`} dir="ltr">
                           {fmtEN(row.shifts[1])}

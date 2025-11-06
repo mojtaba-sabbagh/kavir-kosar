@@ -353,7 +353,7 @@ export default function FormBuilder({
                   </label>
                 </div>
               )}
-
+              <FieldConfigPanel field={f} updateField={updateField} idx={idx} />
               {['select', 'multiselect'].includes(f.type) && (
                 <OptionsEditor idx={idx} field={f} updateField={updateField} />
               )}
@@ -508,6 +508,138 @@ function OptionsEditor({
           <div className="text-xs text-gray-500">گزینه‌ای تعریف نشده است</div>
         )}
       </div>
+    </div>
+  );
+}
+
+// default value inputs for each field type
+
+function FieldConfigPanel({ field, updateField, idx }: {
+  field: Field;
+  updateField: (i: number, p: Partial<Field>) => void;
+  idx: number;
+}) {
+  const cfg = field.config ?? {};
+  
+  const setConfig = (patch: any) => {
+    updateField(idx, { config: { ...cfg, ...patch } });
+  };
+
+  const renderDefaultValueInput = () => {
+    switch (field.type) {
+      case 'text':
+      case 'textarea':
+        return (
+          <div>
+            <label className="block text-sm mb-1">مقدار پیش‌فرض</label>
+            <input
+              className="w-full border rounded-md px-3 py-2"
+              value={cfg.defaultValue ?? ''}
+              onChange={(e) => setConfig({ defaultValue: e.target.value })}
+              placeholder="مقدار پیش‌فرض"
+            />
+          </div>
+        );
+
+      case 'number':
+        return (
+          <div>
+            <label className="block text-sm mb-1">مقدار پیش‌فرض</label>
+            <input
+              type="number"
+              className="w-full border rounded-md px-3 py-2"
+              dir="ltr"
+              value={cfg.defaultValue ?? ''}
+              onChange={(e) => setConfig({ 
+                defaultValue: e.target.value === '' ? undefined : Number(e.target.value) 
+              })}
+              placeholder="عدد پیش‌فرض"
+            />
+          </div>
+        );
+
+      case 'date':
+      case 'datetime':
+        return (
+          <div>
+            <label className="block text-sm mb-1">مقدار پیش‌فرض</label>
+            <select
+              className="w-full border rounded-md px-3 py-2"
+              value={cfg.defaultValue ?? ''}
+              onChange={(e) => setConfig({ defaultValue: e.target.value || undefined })}
+            >
+              <option value="">— بدون پیش‌فرض —</option>
+              <option value="now">زمان حال</option>
+              <option value="today">امروز</option>
+            </select>
+          </div>
+        );
+
+      case 'checkbox':
+        return (
+          <label className="flex items-center gap-2 mt-3">
+            <input
+              type="checkbox"
+              checked={!!cfg.defaultValue}
+              onChange={(e) => setConfig({ defaultValue: e.target.checked })}
+            />
+            <span>فعال به عنوان پیش‌فرض</span>
+          </label>
+        );
+
+      case 'select':
+        return (
+          <div>
+            <label className="block text-sm mb-1">مقدار پیش‌فرض</label>
+            <select
+              className="w-full border rounded-md px-3 py-2"
+              value={cfg.defaultValue ?? ''}
+              onChange={(e) => setConfig({ defaultValue: e.target.value || undefined })}
+            >
+              <option value="">— انتخاب کنید —</option>
+              {(cfg.options ?? []).map((opt: any) => (
+                <option key={String(opt.value)} value={String(opt.value)}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        );
+
+      case 'multiselect':
+        return (
+          <div>
+            <label className="block text-sm mb-1">مقادیر پیش‌فرض</label>
+            <select
+              multiple
+              className="w-full border rounded-md px-3 py-2"
+              value={Array.isArray(cfg.defaultValue) ? cfg.defaultValue : []}
+              onChange={(e) => {
+                const selected = Array.from(e.target.selectedOptions).map(o => o.value);
+                setConfig({ defaultValue: selected });
+              }}
+            >
+              {(cfg.options ?? []).map((opt: any) => (
+                <option key={String(opt.value)} value={String(opt.value)}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            <div className="text-xs text-gray-500 mt-1">
+              برای انتخاب چندگانه، کلید Ctrl را نگه دارید
+            </div>
+          </div>
+        );
+
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="mt-3 border-t pt-3">
+      <h4 className="font-semibold text-sm mb-2">تنظیمات پیش‌فرض</h4>
+      {renderDefaultValueInput()}
     </div>
   );
 }

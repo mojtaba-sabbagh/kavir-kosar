@@ -56,10 +56,104 @@ function fmtFaTime(iso?: string | null) {
   }).format(d);
 }
 
+function resolveDefaultValue(field: Pick<FormField, 'type' | 'config'>): any {
+  const cfg = (field.config ?? {}) as any;
+  
+  if (cfg.defaultValue === undefined) {
+    return getEmptyValueForType(field.type);
+  }
+
+  switch (field.type) {
+    case 'date':
+      if (cfg.defaultValue === 'today') {
+        return new Date().toISOString().split('T')[0];
+      }
+      return cfg.defaultValue;
+
+    case 'datetime':
+      if (cfg.defaultValue === 'now') {
+        return new Date().toISOString();
+      }
+      return cfg.defaultValue;
+
+    case 'checkbox':
+      return Boolean(cfg.defaultValue);
+
+    case 'number':
+      return cfg.defaultValue === '' ? '' : Number(cfg.defaultValue);
+
+    case 'multiselect':
+      return Array.isArray(cfg.defaultValue) ? cfg.defaultValue : [];
+
+    case 'tableSelect':
+    case 'kardexItem':
+      // For these types, defaultValue is the code string
+      return cfg.defaultValue || '';
+
+    default:
+      return cfg.defaultValue;
+  }
+}
+
+function getEmptyValueForType(type: string): any {
+  switch (type) {
+    case 'multiselect':
+      return [];
+    case 'checkbox':
+      return false;
+    case 'number':
+      return '';
+    case 'tableSelect':
+    case 'kardexItem':
+      return ''; // Empty string for code-based fields
+    default:
+      return '';
+  }
+}
 
 export default function DynamicForm({ form, fields }: Props) {
   const sorted = [...fields].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-  const [values, setValues] = useState<Record<string, any>>({});
+
+  // Initialize form values with defaults
+  // Update the getInitialValues function in DynamicForm
+const getInitialValues = () => {
+  const initial: Record<string, any> = {};
+  sorted.forEach(field => {
+    const cfg = (field.config ?? {}) as any;
+    
+    if (cfg.defaultValue !== undefined) {
+      // For tableSelect and kardexItem, store the code as value
+      if (field.type === 'tableSelect' || field.type === 'kardexItem') {
+        initial[field.key] = cfg.defaultValue;
+      } else {
+        // Handle other field types as before
+        initial[field.key] = resolveDefaultValue(field);
+      }
+    } else {
+      // Set empty defaults
+      switch (field.type) {
+        case 'multiselect':
+          initial[field.key] = [];
+          break;
+        case 'checkbox':
+          initial[field.key] = false;
+          break;
+        case 'number':
+          initial[field.key] = '';
+          break;
+        case 'tableSelect':
+        case 'kardexItem':
+          initial[field.key] = ''; // Empty string for single selection
+          break;
+        default:
+          initial[field.key] = '';
+      }
+    }
+  });
+  return initial;
+};
+
+  const [values, setValues] = useState<Record<string, any>>(getInitialValues());
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);

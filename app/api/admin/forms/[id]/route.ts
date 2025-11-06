@@ -44,7 +44,7 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
     isActive: p.data.isActive,
   }});
 
-  // --- NEW: Upsert / delete Kardex rule if requested ---
+  // Upsert / delete Kardex rule if requested ---
   if (p.data.removeKardex === true) {
     await prisma.formKardexRule.deleteMany({ where: { formId: id } });
   } else if (p.data.kardex && p.data.kardex.codeKey && p.data.kardex.qtyKey) {

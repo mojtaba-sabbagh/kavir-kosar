@@ -1,11 +1,36 @@
-// KardexPicker.tsx (original + clear button)
-
 'use client';
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 type KardexItem = { id: string; code: string; nameFa: string; unit?: string | null };
+
+// Digit conversion utilities
+const ARABIC_INDIC = '٠١٢٣٤٥٦٧٨٩';
+const PERSIAN = '۰۱۲۳۴۵۶۷۸۹';
+
+function toEnglishDigits(s: string): string {
+  if (!s) return s;
+  // unify thousands/decimal separators
+  // Arabic thousands: U+066C '٬' ; Arabic decimal: U+066B '٫' ; Arabic comma: U+060C '،'
+  let t = s.replace(/\u066C|,/g, '')            // remove thousands separators
+           .replace(/\u066B|\u060C/g, '.');     // convert Arabic decimal/comma to dot
+
+  // convert Persian & Arabic-Indic digits to ASCII
+  t = t.replace(/[۰-۹]/g, d => String(PERSIAN.indexOf(d)))
+       .replace(/[٠-٩]/g, d => String(ARABIC_INDIC.indexOf(d)));
+
+  // trim spaces
+  return t.trim();
+}
+
+function normalizeSearchQuery(query: string): string {
+  // Convert Farsi/Arabic digits to English
+  const englishDigits = toEnglishDigits(query);
+  
+  // Remove extra spaces and normalize
+  return englishDigits.trim().replace(/\s+/g, ' ');
+}
 
 export default function KardexPicker({
   label,
@@ -84,8 +109,11 @@ export default function KardexPicker({
 
   // Shared fetcher (supports empty query)
   async function fetchItems(signal: AbortSignal, query: string) {
+    // Normalize the query - convert Farsi digits to English
+    const normalizedQuery = normalizeSearchQuery(query);
+    
     const url = new URL(endpoint, window.location.origin);
-    if (query.trim().length > 0) url.searchParams.set('q', query.trim());
+    if (normalizedQuery.trim().length > 0) url.searchParams.set('q', normalizedQuery.trim());
     setErr(null);
     setLoading(true);
     try {
@@ -108,7 +136,8 @@ export default function KardexPicker({
 
   // Fetch when typing (including empty if allowed by minChars=0)
   useEffect(() => {
-    const need = dq.trim().length >= minChars;
+    const normalizedQuery = normalizeSearchQuery(dq);
+    const need = normalizedQuery.trim().length >= minChars;
     if (!need) {
       setItems([]);
       setOpen(false);
@@ -116,7 +145,7 @@ export default function KardexPicker({
       return;
     }
     const ctrl = new AbortController();
-    fetchItems(ctrl.signal, dq);
+    fetchItems(ctrl.signal, normalizedQuery);
     return () => ctrl.abort();
   }, [dq, minChars]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -131,6 +160,13 @@ export default function KardexPicker({
       const ctrl = new AbortController();
       fetchItems(ctrl.signal, '');
     }
+  };
+
+  // Handle input change with digit conversion for display
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawValue = e.target.value;
+    setQ(rawValue); // Keep the raw value for display (user can type in Farsi)
+    updateRect();
   };
 
   // Blur handling for mobile
@@ -166,7 +202,7 @@ export default function KardexPicker({
           inputMode="search"
           autoComplete="off"
           value={q}
-          onChange={(e) => { setQ(e.target.value); updateRect(); }}
+          onChange={handleInputChange}
           onFocus={handleFocus}
           onBlur={scheduleClose}
           onClick={() => { updateRect(); if (items.length > 0) setOpen(true); }}
@@ -235,4 +271,3 @@ export default function KardexPicker({
     </div>
   );
 }
-// End of KardexPicker.tsx

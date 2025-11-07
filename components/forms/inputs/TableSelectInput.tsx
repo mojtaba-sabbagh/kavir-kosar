@@ -131,6 +131,14 @@ export default function TableSelectInput({ label, value, currentTitle, onChange,
     }
   }, [defaultValue, value, initialLoad, opts, onChange]);
 
+  // Clear selection
+  const handleClear = () => {
+    onChange('', '');
+    setQ('');
+    setOpen(true);
+    inputRef.current?.focus();
+  };
+
   return (
     <div className="space-y-2" dir="rtl">
       <label className="block text-sm font-medium text-gray-700">
@@ -150,10 +158,11 @@ export default function TableSelectInput({ label, value, currentTitle, onChange,
           }
         }}
       >
-        <div className="flex gap-2">
+        {/* Input with clear button inside */}
+        <div className="relative">
           <input
             ref={inputRef}
-            className="w-full border rounded-md px-3 py-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+            className="w-full border rounded-md pr-3 pl-9 py-2 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
             placeholder={open ? 'جستجو…' : (selectedLabel || label || 'انتخاب کنید…')}
             value={open ? q : selectedLabel}
             onChange={(e) => setQ(e.target.value)}
@@ -187,20 +196,20 @@ export default function TableSelectInput({ label, value, currentTitle, onChange,
             }}
           />
 
-          {/* Clear button */}
-          {value && (
+          {/* Clear button inside the input */}
+          {(value || q) && (
             <button
               type="button"
-              className="shrink-0 rounded-md border px-3 py-2 hover:bg-gray-50 transition-colors"
-              onClick={() => {
-                onChange('', '');
-                setQ('');
-                setOpen(true);
-                inputRef.current?.focus();
-              }}
+              aria-label="پاک کردن انتخاب"
+              className="absolute left-2 top-1/2 -translate-y-1/2 p-1 rounded-md text-gray-500 hover:bg-gray-100 active:bg-gray-200 transition-colors"
+              onMouseDown={(e) => e.preventDefault()} // keep focus on input
+              onClick={handleClear}
               title="پاک کردن"
             >
-              ×
+              {/* X icon */}
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
             </button>
           )}
         </div>

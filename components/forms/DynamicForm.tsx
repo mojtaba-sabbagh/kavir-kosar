@@ -1,8 +1,6 @@
-// /components/forms/DynamicForm
-
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { Form, FormField, FieldType } from '@prisma/client';
 import { isLtrField, optionLabel } from '@/lib/forms/field-utils';
 import KardexPicker from './KardexPicker';
@@ -21,16 +19,10 @@ const PERSIAN = '۰۱۲۳۴۵۶۷۸۹';
 
 function toEnglishDigits(s: string): string {
   if (!s) return s;
-  // unify thousands/decimal separators
-  // Arabic thousands: U+066C '٬' ; Arabic decimal: U+066B '٫' ; Arabic comma: U+060C '،'
-  let t = s.replace(/\u066C|,/g, '')            // remove thousands separators
-           .replace(/\u066B|\u060C/g, '.');     // convert Arabic decimal/comma to dot
-
-  // convert Persian & Arabic-Indic digits to ASCII
+  let t = s.replace(/\u066C|,/g, '')
+           .replace(/\u066B|\u060C/g, '.');
   t = t.replace(/[۰-۹]/g, d => String(PERSIAN.indexOf(d)))
        .replace(/[٠-٩]/g, d => String(ARABIC_INDIC.indexOf(d)));
-
-  // trim spaces
   return t.trim();
 }
 
@@ -87,7 +79,6 @@ function resolveDefaultValue(field: Pick<FormField, 'type' | 'config'>): any {
 
     case 'tableSelect':
     case 'kardexItem':
-      // For these types, defaultValue is the code string
       return cfg.defaultValue || '';
 
     default:
@@ -105,7 +96,7 @@ function getEmptyValueForType(type: string): any {
       return '';
     case 'tableSelect':
     case 'kardexItem':
-      return ''; // Empty string for code-based fields
+      return '';
     default:
       return '';
   }
@@ -115,50 +106,51 @@ export default function DynamicForm({ form, fields }: Props) {
   const sorted = [...fields].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
   // Initialize form values with defaults
-  // Update the getInitialValues function in DynamicForm
-const getInitialValues = () => {
-  const initial: Record<string, any> = {};
-  sorted.forEach(field => {
-    const cfg = (field.config ?? {}) as any;
-    
-    if (cfg.defaultValue !== undefined) {
-      // For tableSelect and kardexItem, store the code as value
-      if (field.type === 'tableSelect' || field.type === 'kardexItem') {
-        initial[field.key] = cfg.defaultValue;
-      } else {
-        // Handle other field types as before
-        initial[field.key] = resolveDefaultValue(field);
-      }
-    } else {
-      // Set empty defaults
-      switch (field.type) {
-        case 'multiselect':
-          initial[field.key] = [];
-          break;
-        case 'checkbox':
-          initial[field.key] = false;
-          break;
-        case 'number':
-          initial[field.key] = '';
-          break;
-        case 'tableSelect':
-        case 'kardexItem':
-          initial[field.key] = ''; // Empty string for single selection
-          break;
-        default:
-          initial[field.key] = '';
-      }
-    }
-  });
-  return initial;
-};
+  const getInitialValues = () => {
+    const initial: Record<string, any> = {};
+    sorted.forEach(field => {
+      initial[field.key] = resolveDefaultValue(field);
+    });
+    return initial;
+  };
 
   const [values, setValues] = useState<Record<string, any>>(getInitialValues());
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  const set = (k: string, v: any) => setValues(prev => ({ ...prev, [k]: v }));
+  // Track if form has been modified to clear messages
+  const [isFormModified, setIsFormModified] = useState(false);
+
+  // Clear messages when form is modified
+  useEffect(() => {
+    if (isFormModified && (msg || err)) {
+      setMsg(null);
+      setErr(null);
+    }
+  }, [isFormModified, msg, err]);
+
+  const set = (k: string, v: any) => {
+    // Mark form as modified when any field changes
+    if (!isFormModified) {
+      setIsFormModified(true);
+    }
+    setValues(prev => ({ ...prev, [k]: v }));
+  };
+
+  // Clear messages when user focuses on any input
+  const handleFieldFocus = () => {
+    if (msg || err) {
+      setMsg(null);
+      setErr(null);
+    }
+  };
+
+  // Reset form modification state when form is submitted successfully
+  const resetForm = () => {
+    setValues(getInitialValues());
+    setIsFormModified(false);
+  };
 
   async function handleFileUpload(file: File) {
     const fd = new FormData();
@@ -166,8 +158,9 @@ const getInitialValues = () => {
     const res = await fetch('/api/uploads', { method: 'POST', body: fd });
     if (!res.ok) throw new Error((await res.json().catch(()=>({}))).message || 'خطا در بارگذاری');
     const json = await res.json();
-    return json.storageKey as string; // e.g., /uploads/123.png
+    return json.storageKey as string;
   }
+
   const coerceValues = (
     fields: Pick<FormField, 'key'|'type'|'config'>[],
     vals: Record<string, any>
@@ -182,14 +175,15 @@ const getInitialValues = () => {
         const n = (f.config as any)?.decimals ? parseFloat(en) : parseInt(en, 10);
         out[f.key] = Number.isFinite(n) ? n : null;
       }
-      // If you later support group/repeatable with nested number fields,
-      // recurse into their children here.
     }
     return out;
   };
+
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true); setMsg(null); setErr(null);
+    setLoading(true); 
+    setMsg(null); 
+    setErr(null);
     try {
       const payload = coerceValues(sorted, values);
       const res = await fetch(`/api/forms/submit?code=${encodeURIComponent(form.code)}`, {
@@ -199,7 +193,7 @@ const getInitialValues = () => {
       });
       if (res.ok) {
         setMsg('ثبت شد');
-        setValues({});
+        resetForm(); // Use the reset function instead of direct setValues
       } else {
         const j = await res.json().catch(()=>({}));
         setErr(j.message || 'خطا در ثبت');
@@ -213,18 +207,18 @@ const getInitialValues = () => {
 
   return (
     <div className="mx-auto max-w-xl">
-        <div className="flex justify-between items-center bg-white p-4 rounded-lg shadow-sm mb-4">
-          <h2 className="text-xl font-bold mb-4">{form.titleFa}</h2>
-          <Link
-            href="/"
-            className="inline-flex items-center gap-2 rounded-md border px-3 py-1 text-sm hover:bg-purple-50"
-            title="بازگشت به خانه"
-            prefetch
-          >
-            <span aria-hidden>←</span>
-            <span>بازگشت</span>
-          </Link>
-        </div>
+      <div className="flex justify-between items-center bg-white p-4 rounded-lg shadow-sm mb-4">
+        <h2 className="text-xl font-bold">{form.titleFa}</h2>
+        <Link
+          href="/"
+          className="inline-flex items-center gap-2 rounded-md border px-3 py-1 text-sm hover:bg-purple-50"
+          title="بازگشت به خانه"
+          prefetch
+        >
+          <span aria-hidden>←</span>
+          <span>بازگشت</span>
+        </Link>
+      </div>
 
       <form onSubmit={onSubmit} className="rounded-2xl bg-white p-4 border space-y-4">
         {sorted.map(f => {
@@ -234,9 +228,12 @@ const getInitialValues = () => {
 
           return (
             <div key={f.key}>
-              <label className="block text-sm mb-1">
-                {f.labelFa}{f.required ? ' *' : ''}
-              </label>
+              {/* FIXED: Remove duplicate label from TableSelectInput wrapper */}
+              {f.type !== 'tableSelect' && f.type !== 'kardexItem' && (
+                <label className="block text-sm mb-1">
+                  {f.labelFa}{f.required ? ' *' : ''}
+                </label>
+              )}
 
               {f.type === 'text' && (
                 <input
@@ -244,6 +241,7 @@ const getInitialValues = () => {
                   dir={ltr}
                   value={values[f.key] ?? ''}
                   onChange={e => set(f.key, e.target.value)}
+                  onFocus={handleFieldFocus}
                 />
               )}
 
@@ -254,60 +252,57 @@ const getInitialValues = () => {
                   rows={cfg.rows ?? 4}
                   value={values[f.key] ?? ''}
                   onChange={e => set(f.key, e.target.value)}
+                  onFocus={handleFieldFocus}
                 />
               )}
 
               {f.type === 'number' && (
                 <input
-                  type="text"                  // <— important: not "number"
-                  inputMode="decimal"          // mobile numeric keypad
+                  type="text"
+                  inputMode="decimal"
                   className={common}
-                  dir="ltr"                    // keep left-to-right for readability
+                  dir="ltr"
                   value={values[f.key] ?? ''}
                   onChange={(e) => {
-                    // allow digits (ASCII, Persian, Arabic-Indic), decimal separators, minus sign
                     const raw = e.target.value;
                     const cleaned = raw.replace(/[^\d۰-۹٠-٩\.\u066B\u060C\u066C-]/g, '');
                     set(f.key, cleaned);
                   }}
+                  onFocus={handleFieldFocus}
                   placeholder={cfg.placeholder ?? ''}
-                  pattern={cfg.decimals
-                    ? "[0-9٠-٩۰-۹]+([\\.\\u066B\\u060C][0-9٠-٩۰-۹]+)?"
-                    : "[0-9٠-٩۰-۹]+"}
-                  title="فقط عدد وارد کنید (ارقام فارسی هم مجاز است)"
                 />
               )}
 
               {f.type === 'date' && (
-                <JDatePicker
-                  value={(values[f.key] as string | undefined) ?? null}
-                  onChange={(iso) => set(f.key, iso)}
-                />
+                <div onFocus={handleFieldFocus}>
+                  <JDatePicker
+                    value={(values[f.key] as string | undefined) ?? null}
+                    onChange={(iso) => set(f.key, iso)}
+                  />
+                </div>
               )}
 
               {f.type === "datetime" && (
-                <div className="flex items-center gap-3">
-                   {/* DateTime picker at half width */}
+                <div onFocus={handleFieldFocus} className="flex items-center gap-3">
                   <div className="w-1/2 min-w-[260px]">
                     <JDateTimePicker
                       value={(values[f.key] as string | undefined) ?? null}
                       onChange={(iso) => set(f.key, iso)}
                     />
                   </div>
-                  {/* Time preview BEFORE the picker (no date) */}
                   <div className="text-sm font-semibold text-gray-700 shrink-0">
-                    <span>
-                      {fmtFaTime(values[f.key] as string | undefined)}
-                    </span>
+                    <span>{fmtFaTime(values[f.key] as string | undefined)}</span>
                   </div>
                 </div>
               )}
+
               {f.type === 'checkbox' && (
                 <label className="inline-flex items-center gap-2">
                   <input
                     type="checkbox"
                     checked={!!values[f.key]}
                     onChange={e => set(f.key, e.target.checked)}
+                    onFocus={handleFieldFocus}
                   />
                   <span>بله</span>
                 </label>
@@ -317,8 +312,9 @@ const getInitialValues = () => {
                 <select
                   className={common}
                   dir="rtl"
-                  value={values[f.key] ?? (cfg?.default ?? '')}
+                  value={values[f.key] ?? ''}
                   onChange={e => set(f.key, e.target.value)}
+                  onFocus={handleFieldFocus}
                 >
                   <option value="" disabled>انتخاب کنید…</option>
                   {(cfg?.options ?? []).map((opt: any) => (
@@ -339,6 +335,7 @@ const getInitialValues = () => {
                     const arr = Array.from(e.target.selectedOptions).map(o => o.value);
                     set(f.key, arr);
                   }}
+                  onFocus={handleFieldFocus}
                 >
                   {(cfg?.options ?? []).map((opt: any) => (
                     <option key={String(opt.value)} value={String(opt.value)}>
@@ -358,59 +355,64 @@ const getInitialValues = () => {
                     try {
                       setErr(null);
                       const key = await handleFileUpload(file);
-                      set(f.key, key); // save storageKey in payload
+                      set(f.key, key);
                     } catch (ex: any) {
                       setErr(ex?.message || 'خطا در بارگذاری فایل');
                     }
                   }}
+                  onFocus={handleFieldFocus}
                 />
               )}
 
               {/* entryRef */}
               {f.type === 'entryRef' && (
-                <EntryPicker
-                  value={values[f.key] as string | undefined}
-                  onChange={(v)=>set(f.key, v)}
-                  allowedFormCodes={(cfg?.allowedFormCodes as string[] | undefined)}
-                />
+                <div onFocus={handleFieldFocus}>
+                  <EntryPicker
+                    value={values[f.key] as string | undefined}
+                    onChange={(v)=>set(f.key, v)}
+                    allowedFormCodes={(cfg?.allowedFormCodes as string[] | undefined)}
+                  />
+                </div>
               )}
 
               {/* entryRefMulti */}
               {f.type === 'entryRefMulti' && (
-                <EntryMultiPicker
-                  value={(values[f.key] as string[] | undefined) ?? []}
-                  onChange={(arr)=>set(f.key, arr)}
-                  allowedFormCodes={(cfg?.allowedFormCodes as string[] | undefined)}
-                />
+                <div onFocus={handleFieldFocus}>
+                  <EntryMultiPicker
+                    value={(values[f.key] as string[] | undefined) ?? []}
+                    onChange={(arr)=>set(f.key, arr)}
+                    allowedFormCodes={(cfg?.allowedFormCodes as string[] | undefined)}
+                  />
+                </div>
               )}
 
-              {/* kardexItem */}
+              {/* kardexItem - TableSelectInput handles its own label */}
               {f.type === 'kardexItem' && (
-                <KardexPicker
-                  label={f.labelFa}
-                  value={values[f.key] || ''}
-                  onSelect={(it) => {
-                    // store the chosen code in your payload
-                    set(f.key, it.code);
-                    // optionally store name too if you have a companion key in config
-                    if ((f.config as any)?.nameKey) {
-                      set((f.config as any).nameKey, it.nameFa);
-                    }
-                  }}
-                />
+                <div onFocus={handleFieldFocus}>
+                  <KardexPicker
+                    label={f.labelFa}
+                    value={values[f.key] || ''}
+                    onSelect={(it) => {
+                      set(f.key, it.code);
+                      if ((f.config as any)?.nameKey) {
+                        set((f.config as any).nameKey, it.nameFa);
+                      }
+                    }}
+                  />
+                </div>
               )}
 
-              {/* tableSelect */}
+              {/* tableSelect - TableSelectInput handles its own label */}
               {f.type === 'tableSelect' && (
-                <TableSelectInput
-                  label={f.labelFa}
-                  value={(values[f.key] as string) ?? ''}
-                  onChange={(val: string) => set(f.key, val)}   // store the selected code
-                  config={(cfg?.tableSelect ?? cfg ?? {}) as { table?: string; type?: string }}
-                />
+                <div onFocus={handleFieldFocus}>
+                  <TableSelectInput
+                    label={f.labelFa}
+                    value={(values[f.key] as string) ?? ''}
+                    onChange={(val: string) => set(f.key, val)}
+                    config={(cfg?.tableSelect ?? cfg ?? {}) as { table?: string; type?: string }}
+                  />
+                </div>
               )}
-              
-              {/* Add other field types as needed */}
             </div>
           );
         })}
@@ -427,6 +429,7 @@ const getInitialValues = () => {
     </div>
   );
 }
+
 
 function EntryPicker({
   value,

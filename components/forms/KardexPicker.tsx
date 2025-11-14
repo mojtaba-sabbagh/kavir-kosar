@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useId } from 'react';
 import { createPortal } from 'react-dom';
 
 type KardexItem = { id: string; code: string; nameFa: string; unit?: string | null };
@@ -33,7 +33,7 @@ function normalizeSearchQuery(query: string): string {
 }
 
 export default function KardexPicker({
-  label,
+  label = 'کالا',
   value,
   onSelect,
   onClear, // 🆕 optional: notify parent to clear selected value
@@ -41,7 +41,7 @@ export default function KardexPicker({
   minChars = 0,
   debounceMs = 250,
 }: {
-  label: string;
+  label?: string;
   value?: string;
   onSelect: (it: KardexItem) => void;
   onClear?: () => void; // 🆕
@@ -49,6 +49,7 @@ export default function KardexPicker({
   minChars?: number;
   debounceMs?: number;
 }) {
+  const id = useId();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
@@ -57,6 +58,10 @@ export default function KardexPicker({
   const [err, setErr] = useState<string | null>(null);
   const [rect, setRect] = useState<DOMRect | null>(null);
   const blurTimer = useRef<number | null>(null);
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const isScrollingRef = useRef(false);
+  const lastTouchScrollRef = useRef<number | null>(null);
+  const listRef = useRef<HTMLUListElement | null>(null);
 
   const updateRect = () => {
     if (!inputRef.current) return;
@@ -89,7 +94,8 @@ export default function KardexPicker({
     const onDocPointerDown = (e: PointerEvent) => {
       if (!inputRef.current) return;
       const t = e.target as Node;
-      if (inputRef.current.contains(t)) return;
+      // keep dropdown open when interacting with input or the portal list
+      if (inputRef.current.contains(t) || listRef.current?.contains(t)) return;
       setOpen(false);
     };
     document.addEventListener('pointerdown', onDocPointerDown, { passive: true });
@@ -192,9 +198,12 @@ export default function KardexPicker({
 
   return (
     <div className="relative" dir="rtl">
+      {/* Visible label for accessibility */}
+      <label htmlFor={id} className="block text-sm font-medium mb-1">{label}</label>
       {/* 🆕 Wrap input so we can place the clear button on the left */}
       <div className="relative">
         <input
+          id={id}
           ref={inputRef}
           className="w-full rounded-md border pr-3 pl-9 py-2" // 🆕 left padding for the button
           placeholder={label}
@@ -232,6 +241,8 @@ export default function KardexPicker({
 
       {open && items.length > 0 && rect && typeof window !== 'undefined' && createPortal(
         <ul
+          aria-label={`نتایج ${label}`}
+          ref={listRef}
           role="listbox"
           style={{
             position: 'fixed',
@@ -239,11 +250,30 @@ export default function KardexPicker({
             left: rect.left,
             width: rect.width,
             maxHeight: '16rem',
+            WebkitOverflowScrolling: 'touch',
+            touchAction: 'pan-y',
             zIndex: 10000,
           }}
           className="overflow-auto rounded-md border bg-white shadow-lg"
-          onPointerDown={(e) => { e.preventDefault(); cancelScheduledClose(); }}
-          onMouseDown={(e) => { e.preventDefault(); cancelScheduledClose(); }}
+          onTouchStart={(e) => {
+            cancelScheduledClose();
+            const touch = e.touches[0];
+            touchStartRef.current = { x: touch.clientX, y: touch.clientY };
+            isScrollingRef.current = false;
+          }}
+          onTouchMove={(e) => {
+            if (!touchStartRef.current) return;
+            const touch = e.touches[0];
+            const dx = Math.abs(touch.clientX - touchStartRef.current.x);
+            const dy = Math.abs(touch.clientY - touchStartRef.current.y);
+            // If movement is primarily vertical, it's a scroll
+            if (dy > dx && dy > 10) {
+              isScrollingRef.current = true;
+              lastTouchScrollRef.current = Date.now();
+            }
+          }}
+          // keep pointer handling minimal so native touch scrolling can occur
+          onPointerDown={cancelScheduledClose}
         >
           {items.map((it) => (
             <li
@@ -251,15 +281,49 @@ export default function KardexPicker({
               role="option"
               tabIndex={-1}
               className="px-3 py-2 hover:bg-blue-50 cursor-pointer flex items-center justify-between pointer-events-auto"
-              onPointerDown={(e) => {
-                e.preventDefault();
+              onTouchEnd={(e) => {
+                // Fallback for browsers that don't reliably emit pointer events
+                if (!isScrollingRef.current) {
+                  // avoid duplicate selection if pointer handler already ran
+                  if (lastTouchScrollRef.current && Date.now() - lastTouchScrollRef.current < 700) {
+                    touchStartRef.current = null;
+                    return;
+                  }
+                  lastTouchScrollRef.current = Date.now();
+                  cancelScheduledClose();
+                  onSelect(it);
+                  setQ(`${it.nameFa} — ${it.code}`);
+                  setOpen(false);
+                }
+                touchStartRef.current = null;
+              }}
+              onPointerUp={(e) => {
+                // Handle touch/pen pointer up; ignore if scrolling
+                // (React's PointerEvent has pointerType)
+                // @ts-ignore -- pointerType exists on PointerEvent
+                const pType = (e as any).pointerType;
+                if (pType === 'touch' || pType === 'pen') {
+                  if (isScrollingRef.current) {
+                    touchStartRef.current = null;
+                    return;
+                  }
+                  // mark recent touch selection to avoid duplicate click
+                  lastTouchScrollRef.current = Date.now();
+                  cancelScheduledClose();
+                  onSelect(it);
+                  setQ(`${it.nameFa} — ${it.code}`);
+                  setOpen(false);
+                  touchStartRef.current = null;
+                }
+              }}
+              onClick={() => {
+                // ignore clicks that follow a recent touch selection/scroll
+                if (lastTouchScrollRef.current && Date.now() - lastTouchScrollRef.current < 700) return;
                 cancelScheduledClose();
                 onSelect(it);
-                // Keep a human-readable label in the box
                 setQ(`${it.nameFa} — ${it.code}`);
                 setOpen(false);
               }}
-              onMouseDown={(e) => e.preventDefault()}
             >
               <span>{it.nameFa}</span>
               <span className="text-xs text-gray-500 font-mono ltr">{it.code}</span>

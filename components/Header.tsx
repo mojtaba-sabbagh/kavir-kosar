@@ -31,7 +31,7 @@ export default async function Header() {
         {/* Mobile Layout */}
         <div className="block md:hidden">
           {/* Top row: Logo and Navigation */}
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between">
             <Link href="/" className="group shrink-0 no-underline transition-transform hover:scale-105">
               <div className="flex items-center gap-2">
                 <div className="relative overflow-hidden rounded-lg bg-gradient-to-br from-blue-50 to-indigo-100 p-1.5 shadow-sm ring-1 ring-blue-100 transition-all group-hover:shadow-md group-hover:ring-blue-200">
@@ -80,13 +80,13 @@ export default async function Header() {
             </nav>
           </div>
 
-          {/* Bottom row: Title (Mobile) */}
-          <div className="text-center">
+          {/* Bottom row: Title (Mobile) - hidden to avoid extra space on small screens */}
+          <div className="hidden">
             <Link href="/" className="group inline-block no-underline">
               <h1 className="text-base font-bold bg-gradient-to-r from-gray-900 via-gray-800 to-gray-900 bg-clip-text text-transparent leading-tight transition-all group-hover:from-blue-900 group-hover:via-blue-800 group-hover:to-blue-900 mb-1">
                 شرکت صنایع غذایی کوثر کویر رفسنجان
               </h1>
-              <p className="text-xs text-gray-500 font-medium tracking-wide transition-colors group-hover:text-gray-600">
+              <p className="hidden md:block text-xs text-gray-500 font-medium tracking-wide transition-colors group-hover:text-gray-600">
                 سامانه ورود و تکمیل فرم‌های سازمانی
               </p>
             </Link>

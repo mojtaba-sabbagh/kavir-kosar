@@ -348,3 +348,18 @@ model FixedInformation {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
+
+model AIGeneratedReport {
+  id              String   @id @default(uuid())
+  userId          String
+  requirement     String   @db.Text // Farsi natural language requirement
+  generatedSql    String   @db.Text // Generated SQL query
+  resultCount     Int      @default(0) // Number of rows returned
+  formId          String? // Optional: restrict to specific form
+  lastExecutedAt  DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([formId])
+}

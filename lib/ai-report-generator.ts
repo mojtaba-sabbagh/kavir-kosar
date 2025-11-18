@@ -233,7 +233,7 @@ export async function generateReportFromRequirement(
 
     // 8. Save the successful query
     try {
-      await prisma.aiGeneratedReport.create({
+      await prisma.aIGeneratedReport.create({
         data: {
           userId: params.userId,
           requirement: params.requirement,
@@ -271,7 +271,7 @@ export async function generateReportFromRequirement(
  * Get user's saved reports
  */
 export async function getSavedReports(userId: string, limit = 20) {
-  return await prisma.aiGeneratedReport.findMany({
+  return await prisma.aIGeneratedReport.findMany({
     where: { userId },
     orderBy: { createdAt: 'desc' },
     take: limit,
@@ -290,7 +290,7 @@ export async function getSavedReports(userId: string, limit = 20) {
  * Get a saved report by ID
  */
 export async function getSavedReport(id: string, userId: string) {
-  return await prisma.aiGeneratedReport.findUnique({
+  return await prisma.aIGeneratedReport.findUnique({
     where: { id, userId },
   });
 }
@@ -308,11 +308,11 @@ export async function reExecuteSavedReport(id: string, userId: string): Promise<
   }
 
   try {
-    const results = await prisma.$queryRawUnsafe(report.generatedSql);
+    const results = (await prisma.$queryRawUnsafe(report.generatedSql)) as Record<string, any>[];
     const columns = results.length > 0 ? Object.keys(results[0]) : [];
 
     // Update last executed time
-    await prisma.aiGeneratedReport.update({
+    await prisma.aIGeneratedReport.update({
       where: { id },
       data: { lastExecutedAt: new Date(), resultCount: results.length },
     });

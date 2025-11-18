@@ -19,6 +19,7 @@
     "@tailwindcss/postcss": "^4.1.12",
     "bcryptjs": "^3.0.2",
     "cookie": "^1.0.2",
+    "date-fns": "^4.1.0",
     "date-object": "^2.1.6",
     "jose": "^6.0.13",
     "next": "15.5.0",

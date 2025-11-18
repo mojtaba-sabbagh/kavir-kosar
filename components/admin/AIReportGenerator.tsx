@@ -2,8 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import { format } from 'date-fns';
-import { fa } from 'date-fns/locale';
-
 interface ReportResult {
   success: boolean;
   sql?: string;
@@ -309,8 +307,7 @@ export default function AIReportGenerator() {
                     <p className="text-xs text-gray-400 mt-0.5">
                       {format(
                         new Date(report.lastExecutedAt),
-                        'dd/MM HH:mm',
-                        { locale: fa }
+                        'dd/MM HH:mm'
                       )}
                     </p>
                   </button>
@@ -333,8 +330,8 @@ function formatCellValue(value: any): string {
   if (typeof value === 'object') return JSON.stringify(value);
   if (typeof value === 'number') {
     return Number.isInteger(value)
-      ? value.toLocaleString('fa-IR')
-      : value.toFixed(2).toLocaleString('fa-IR');
+      ? String(value)
+      : value.toFixed(2);
   }
   return String(value);
 }

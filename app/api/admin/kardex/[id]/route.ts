@@ -2,6 +2,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { z } from "zod";
+import { requireAdmin } from '@/lib/rbac';
 
 export const dynamic = "force-dynamic";
 
@@ -112,5 +113,28 @@ export async function PUT(req: NextRequest, context: { params: Promise<{ id: str
 }
 
 export async function OPTIONS() {
-  return new NextResponse(null, { status: 204, headers: { Allow: "PUT, PATCH, OPTIONS" } });
+  return new NextResponse(null, { status: 204, headers: { Allow: "PUT, PATCH, DELETE, OPTIONS" } });
+}
+
+// ---------- DELETE: remove item ----------
+export async function DELETE(req: NextRequest, context: { params: Promise<{ id: string }> }) {
+  try {
+    await requireAdmin();
+  } catch (e: any) {
+    const code = e?.message === 'UNAUTHORIZED' ? 401 : 403;
+    return NextResponse.json({ message: 'دسترسی غیرمجاز' }, { status: code });
+  }
+
+  const { id } = await context.params;
+
+  try {
+    await prisma.kardexItem.delete({ where: { id } });
+  } catch (err: any) {
+    if (err?.code === 'P2025') {
+      return NextResponse.json({ message: 'مورد یافت نشد' }, { status: 404 });
+    }
+    throw err;
+  }
+
+  return NextResponse.json({ ok: true });
 }

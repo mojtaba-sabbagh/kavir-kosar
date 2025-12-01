@@ -7,6 +7,8 @@ COPY package.json package-lock.json* ./
 COPY prisma ./prisma/
 # Install all dependencies including devDependencies (needed for building)
 RUN npm ci
+# Generate Prisma client explicitly
+RUN npx prisma generate
 
 # Stage 2: Builder - build the application and generate Prisma client
 FROM node:18-alpine AS builder

@@ -89,19 +89,34 @@ ${schemaDescription}
 function createPrompt(requirement: string, schema: string): string {
   return `You are an expert PostgreSQL developer who understands Farsi requirements and database schemas. Your task is to convert a Farsi natural language requirement into a valid PostgreSQL SELECT query.
 
+## Database Schema
+
+### FormEntry Table - Column Names (EXACT SPELLING - use camelCase, NOT snake_case):
+- id (UUID, primary key)
+- formId (UUID, foreign key to Form)
+- createdBy (UUID, user ID)
+- createdAt (DateTime - use exactly "createdAt", NOT "created_at")
+- updatedAt (DateTime - use exactly "updatedAt", NOT "updated_at") 
+- payload (JSON - form field answers)
+- status (Enum: draft, submitted, confirmed, finalConfirmed)
+- finalConfirmedAt (DateTime, nullable)
+- finalConfirmedById (UUID, nullable)
+
 ${schema}
 
-## Instructions
-1. The user's requirement is in Farsi. Understand what data they want.
-2. Generate a PostgreSQL SELECT query that extracts the required data from FormEntry and related tables.
-3. Use JSON operators to access payload fields: 
+## Critical Instructions
+1. ALWAYS use camelCase for column names: createdAt, updatedAt, formId, createdBy, finalConfirmedAt, finalConfirmedById
+2. NEVER use snake_case: created_at, updated_at, form_id, created_by, etc.
+3. The user's requirement is in Farsi. Understand what data they want.
+4. Generate a PostgreSQL SELECT query that extracts the required data from FormEntry and related tables.
+5. Use JSON operators to access payload fields: 
    - payload->>'fieldKey' returns text/string values
    - payload->'fieldKey'::numeric returns numeric values
    - payload->>'fieldKey'::date returns dates
-4. Always use parameterized queries (use $1, $2, etc. for any literal values that should be parameterized)
-5. Include comments in the query explaining each part
-6. The query MUST start with SELECT and MUST be a read-only query
-7. Return ONLY the SQL query wrapped in \`\`\`sql ... \`\`\` blocks, with no other text
+6. Always use parameterized queries (use $1, $2, etc. for any literal values that should be parameterized)
+7. Include comments in the query explaining each part
+8. The query MUST start with SELECT and MUST be a read-only query
+9. Return ONLY the SQL query wrapped in \`\`\`sql ... \`\`\` blocks, with no other text
 
 User's requirement (in Farsi):
 "${requirement}"

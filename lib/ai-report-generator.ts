@@ -1,7 +1,7 @@
 'use server';
 
 import { prisma } from '@/lib/db';
-import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 
 interface GenerateReportParams {
   requirement: string; // Farsi natural language requirement
@@ -19,9 +19,10 @@ interface GeneratedReport {
   executionTime?: number;
 }
 
-// Initialize Anthropic client
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
+// Initialize OpenAI-compatible client for Avalai
+const openai = new OpenAI({
+  apiKey: process.env.AVALAI_API_KEY,
+  baseURL: 'https://api.avalai.ir/v1',
 });
 
 /**
@@ -175,10 +176,9 @@ export async function generateReportFromRequirement(
     // 2. Create prompt for LLM
     const prompt = createPrompt(params.requirement, schema);
 
-    // 3. Call Anthropic Claude API
-    const message = await anthropic.messages.create({
-      model: 'claude-3-5-sonnet-20241022', // or claude-3-opus-20240229
-      max_tokens: 1024,
+    // 3. Call Avalai (OpenAI-compatible) API
+    const message = await openai.chat.completions.create({
+      model: 'deepseek-chat',
       messages: [
         {
           role: 'user',
@@ -188,8 +188,7 @@ export async function generateReportFromRequirement(
     });
 
     // 4. Extract SQL from response
-    const responseText =
-      message.content[0].type === 'text' ? message.content[0].text : '';
+    const responseText = message.choices[0].message.content || '';
     const generatedSql = extractSql(responseText);
 
     if (!generatedSql) {

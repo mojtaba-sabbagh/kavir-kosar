@@ -107,16 +107,18 @@ ${schema}
 ## Critical Instructions
 1. ALWAYS use camelCase for column names: createdAt, updatedAt, formId, createdBy, finalConfirmedAt, finalConfirmedById
 2. NEVER use snake_case: created_at, updated_at, form_id, created_by, etc.
-3. The user's requirement is in Farsi. Understand what data they want.
-4. Generate a PostgreSQL SELECT query that extracts the required data from FormEntry and related tables.
-5. Use JSON operators to access payload fields: 
+3. ALWAYS double-quote table and column names that are camelCase or reserved words: "formId", "FormEntry", "createdAt"
+4. DO NOT use parameterized queries ($1, $2, etc.) - embed all literal values directly in the WHERE clause
+5. Use single quotes for string literals: status = 'finalConfirmed', NOT status = $1
+6. The user's requirement is in Farsi. Understand what data they want and extract the relevant values from their request.
+7. Generate a PostgreSQL SELECT query that extracts the required data from FormEntry and related tables.
+8. Use JSON operators to access payload fields: 
    - payload->>'fieldKey' returns text/string values
    - payload->'fieldKey'::numeric returns numeric values
    - payload->>'fieldKey'::date returns dates
-6. Always use parameterized queries (use $1, $2, etc. for any literal values that should be parameterized)
-7. Include comments in the query explaining each part
-8. The query MUST start with SELECT and MUST be a read-only query
-9. Return ONLY the SQL query wrapped in \`\`\`sql ... \`\`\` blocks, with no other text
+9. Include comments in the query explaining each part
+10. The query MUST start with SELECT and MUST be a read-only query
+11. Return ONLY the SQL query wrapped in \`\`\`sql ... \`\`\` blocks, with no other text
 
 User's requirement (in Farsi):
 "${requirement}"
@@ -139,6 +141,7 @@ function extractSql(response: string): string | null {
  */
 function validateSql(sql: string): { valid: boolean; error?: string } {
   // Dangerous keywords that should not appear in SELECT queries
+  // Note: SQL comments (-- and /* */) are safe and allowed
   const dangerousKeywords = [
     'DROP',
     'DELETE',
@@ -150,9 +153,6 @@ function validateSql(sql: string): { valid: boolean; error?: string } {
     'EXEC',
     'EXECUTE',
     'PRAGMA',
-    '--',
-    '/*',
-    '*/',
   ];
 
   const upperSql = sql.toUpperCase();
@@ -163,8 +163,13 @@ function validateSql(sql: string): { valid: boolean; error?: string } {
     }
   }
 
-  // Ensure query starts with SELECT
-  if (!upperSql.trim().startsWith('SELECT')) {
+  // Ensure query starts with SELECT (after stripping comments and whitespace)
+  const cleanedSql = sql
+    .replace(/--[^\n]*/g, '') // Remove single-line comments
+    .replace(/\/\*[\s\S]*?\*\//g, '') // Remove multi-line comments
+    .trim();
+  
+  if (!cleanedSql.toUpperCase().startsWith('SELECT')) {
     return { valid: false, error: 'Query must start with SELECT' };
   }
 

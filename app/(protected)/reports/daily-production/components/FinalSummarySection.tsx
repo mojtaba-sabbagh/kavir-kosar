@@ -78,6 +78,20 @@ async function fetchWeightsForCodes(codes: string[]): Promise<Map<string, number
   return m;
 }
 
+/** fetch Persian names (nameFa) from kardex for codes */
+async function fetchNamesForCodes(codes: string[]): Promise<Map<string, string>> {
+  if (!codes.length) return new Map();
+  const items = await prisma.kardexItem.findMany({
+    where: { code: { in: Array.from(new Set(codes)) } },
+    select: { code: true, nameFa: true },
+  });
+  const m = new Map<string, string>();
+  for (const it of items) {
+    m.set(it.code, it.nameFa);
+  }
+  return m;
+}
+
 export default async function FinalSummarySection({ date, product }: Props) {
   const ids = await getFormIdsByCodes(["1031100", "1031000", "1020600"]);
   const frmRaws = ids.get("1031100") ?? "";
@@ -207,6 +221,10 @@ for (const e of rows1031000) {
   const weightCodes = Array.from(new Set([...productCodes, ...allOilCodes]));
   const weights = await fetchWeightsForCodes(weightCodes);
 
+  // fetch Persian names for all spice codes
+  const spiceCodesList = Array.from(netSpicesByCode.keys());
+  const spiceNames = await fetchNamesForCodes(spiceCodesList);
+
   // product weight in kg
   let productWeightKg = 0;
   for (const [c, { count }] of productItemsByCode.entries()) {
@@ -303,9 +321,10 @@ for (const e of rows1031000) {
                   .sort(([a], [b]) => a.localeCompare(b))
                   .map(([code, kg]) => {
                     const pct = productWeightKg > 0 ? (kg / productWeightKg) * 100 : 0;
+                    const nameFa = spiceNames.get(code) || code;
                     return (
                       <tr key={code}>
-                        <td className="px-3 py-2" dir="ltr">{code}</td>
+                        <td className="px-3 py-2">{nameFa} <span className="text-gray-500 text-sm" dir="ltr">({code})</span></td>
                         <td className="px-3 py-2 text-left">{nf(kg)}</td>
                         <td className="px-3 py-2 text-left">{productWeightKg > 0 ? `${pct.toFixed(2)}%` : "—"}</td>
                       </tr>

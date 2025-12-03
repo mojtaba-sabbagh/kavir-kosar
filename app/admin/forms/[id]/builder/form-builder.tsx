@@ -5,6 +5,56 @@ import FormReportConfig, { ReportConfig } from '@/components/reports/FormReportC
 import TableSelectConfigPanel from '@/components/forms/TableSelectConfigPanel';
 
 type AllFormLite = { code: string; titleFa: string };
+
+// --- Subform config panel for 'subform' fields ---
+function SubformConfigPanel({
+  field,
+  allForms,
+  onChange,
+}: {
+  field: BuilderField;
+  allForms: AllFormLite[];
+  onChange: (nextConfig: any) => void;
+}) {
+  const cfg = field.config ?? {};
+  const subformCode: string = cfg.subformCode ?? '';
+
+  const setCfg = (patch: Partial<typeof cfg>) => {
+    onChange({
+      ...cfg,
+      ...patch,
+    });
+  };
+
+  return (
+    <div className="mt-4 border-t pt-4 space-y-3 text-black" dir="rtl">
+      <h4 className="font-semibold text-sm">تنظیمات فرم تکرارشونده</h4>
+
+      <label className="block text-sm">
+        کد فرم
+        <select
+          className="mt-1 w-full rounded-md border px-2 py-1"
+          value={subformCode}
+          onChange={(e) => setCfg({ subformCode: e.target.value })}
+        >
+          <option value="">— انتخاب فرم —</option>
+          {allForms.map((form) => (
+            <option key={form.code} value={form.code}>
+              {form.titleFa} ({form.code})
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {!subformCode && (
+        <p className="text-xs text-amber-600">
+          برای فرم تکرارشونده، انتخاب «کد فرم» ضروری است. فیلدهای فرم انتخاب‌شده به‌عنوان ردیف‌های تکرار استفاده خواهند شد.
+        </p>
+      )}
+    </div>
+  );
+}
+
 // --- Kardex config panel for 'kardexItem' fields ---
 type BuilderField = {
   id?: string;
@@ -122,6 +172,7 @@ const FIELD_TYPES = [
   { v: 'entryRefMulti', t: 'ارجاع‌های متعدد' },
   { v: 'kardexItem', t: 'کاردکس کالا' },
   { v: 'tableSelect', t: 'انتخاب از جدول' },
+  { v: 'subform', t: 'فرم تکرارشونده' },
   { v: 'group', t: 'گروه تکرارشونده' },
 ];
 
@@ -393,6 +444,13 @@ export default function FormBuilder({
                 <KardexConfigPanel
                   field={f}
                   allFields={fields}
+                  onChange={(nextConfig) => updateField(idx, { config: nextConfig })}
+                />
+              )}
+              {f.type === 'subform' && (
+                <SubformConfigPanel
+                  field={f}
+                  allForms={allForms}
                   onChange={(nextConfig) => updateField(idx, { config: nextConfig })}
                 />
               )}

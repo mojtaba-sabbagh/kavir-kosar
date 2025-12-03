@@ -19,7 +19,7 @@ export default async function FormByCodePage(
 
   return (
     <DynamicForm
-      form={{ code: form.code, titleFa: form.titleFa }}
+      form={{ id: form.id, code: form.code, titleFa: form.titleFa }}
       fields={form.fields}
     />
   );

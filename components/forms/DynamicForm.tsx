@@ -7,10 +7,11 @@ import KardexPicker from './KardexPicker';
 import JDatePicker from '@/components/ui/JDatePicker';
 import JDateTimePicker from '@/components/ui/JDateTimePicker';
 import TableSelectInput from './inputs/TableSelectInput';
+import RepeatingSubform from './RepeatingSubform';
 import Link from 'next/link';
 
 type Props = {
-  form: Pick<Form, 'code'|'titleFa'>;
+  form: Pick<Form, 'code'|'titleFa'|'id'>;
   fields: Pick<FormField, 'key'|'labelFa'|'type'|'required'|'config'|'order'>[];
 };
 
@@ -105,11 +106,46 @@ function getEmptyValueForType(type: string): any {
 export default function DynamicForm({ form, fields }: Props) {
   const sorted = [...fields].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
+  // State for subform field definitions (lazy-loaded)
+  const [subformDefs, setSubformDefs] = useState<Record<string, Pick<FormField, 'key'|'labelFa'|'type'|'required'|'config'|'order'>[]>>({});
+  const [subformsLoading, setSubformsLoading] = useState(false);
+
+  // Load subform definitions on mount
+  useEffect(() => {
+    const subformFields = sorted.filter(f => f.type === 'subform');
+    if (subformFields.length === 0) return;
+
+    setSubformsLoading(true);
+    Promise.all(
+      subformFields.map(async (f) => {
+        const cfg = (f.config ?? {}) as any;
+        const subformCode = cfg.subformCode;
+        if (!subformCode) return;
+
+        try {
+          const res = await fetch(`/api/forms/by-code/${encodeURIComponent(subformCode)}?include=fields`);
+          if (!res.ok) throw new Error('Failed to load subform');
+          const { form: subform } = await res.json();
+          setSubformDefs(prev => ({
+            ...prev,
+            [f.key]: (subform?.fields ?? []).sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0))
+          }));
+        } catch (ex) {
+          console.error(`Failed to load subform ${subformCode}:`, ex);
+        }
+      })
+    ).finally(() => setSubformsLoading(false));
+  }, [sorted]);
+
   // Initialize form values with defaults
   const getInitialValues = () => {
     const initial: Record<string, any> = {};
     sorted.forEach(field => {
-      initial[field.key] = resolveDefaultValue(field);
+      if (field.type === 'subform') {
+        initial[field.key] = []; // Empty array of rows for subforms
+      } else {
+        initial[field.key] = resolveDefaultValue(field);
+      }
     });
     return initial;
   };
@@ -410,6 +446,18 @@ export default function DynamicForm({ form, fields }: Props) {
                     value={(values[f.key] as string) ?? ''}
                     onChange={(val: string) => set(f.key, val)}
                     config={(cfg?.tableSelect ?? cfg ?? {}) as { table?: string; type?: string }}
+                  />
+                </div>
+              )}
+
+              {/* subform - repeating rows */}
+              {f.type === 'subform' && subformDefs[f.key] && (
+                <div onFocus={handleFieldFocus}>
+                  <RepeatingSubform
+                    label={f.labelFa}
+                    subformFields={subformDefs[f.key]}
+                    value={(values[f.key] as any[] | undefined) ?? []}
+                    onChange={(rows) => set(f.key, rows)}
                   />
                 </div>
               )}

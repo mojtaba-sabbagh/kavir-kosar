@@ -90,6 +90,7 @@ enum FieldType {
   entryRefMulti // multiple references
   kardexItem
   tableSelect
+  subform // repeating subform (many instances allowed)
 }
 
 model FormField {

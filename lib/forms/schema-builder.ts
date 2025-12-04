@@ -136,6 +136,15 @@ export function buildZodSchema(fields: Pick<FormField,
         break;
       }
       
+      case 'subform': {
+        // Subform is an array of objects (rows)
+        // Each row is an object with fields, but we don't deeply validate here
+        // Just accept it as an array of objects
+        const base = z.array(z.record(z.string(), z.any()));
+        shape[f.key] = f.required ? base.min(1) : base.optional().default([]);
+        break;
+      }
+      
       default: {
         // Fallback: accept string
         const s = z.string().trim();

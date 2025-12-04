@@ -110,10 +110,13 @@ export default function DynamicForm({ form, fields }: Props) {
   const [subformDefs, setSubformDefs] = useState<Record<string, Pick<FormField, 'key'|'labelFa'|'type'|'required'|'config'|'order'>[]>>({});
   const [subformsLoading, setSubformsLoading] = useState(false);
 
-  // Load subform definitions on mount
+  // Load subform definitions on mount - only when fields change
   useEffect(() => {
     const subformFields = sorted.filter(f => f.type === 'subform');
-    if (subformFields.length === 0) return;
+    if (subformFields.length === 0) {
+      setSubformsLoading(false);
+      return;
+    }
 
     setSubformsLoading(true);
     Promise.all(
@@ -135,7 +138,7 @@ export default function DynamicForm({ form, fields }: Props) {
         }
       })
     ).finally(() => setSubformsLoading(false));
-  }, [sorted]);
+  }, [fields]); // Use fields directly, not sorted array
 
   // Initialize form values with defaults
   const getInitialValues = () => {

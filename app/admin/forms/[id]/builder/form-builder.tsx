@@ -10,10 +10,12 @@ type AllFormLite = { code: string; titleFa: string };
 function SubformConfigPanel({
   field,
   allForms,
+  currentFormCode,
   onChange,
 }: {
   field: BuilderField;
   allForms: AllFormLite[];
+  currentFormCode: string;
   onChange: (nextConfig: any) => void;
 }) {
   const cfg = field.config ?? {};
@@ -25,6 +27,9 @@ function SubformConfigPanel({
       ...patch,
     });
   };
+
+  // Filter out the current form to prevent self-reference
+  const availableForms = allForms.filter(f => f.code !== currentFormCode);
 
   return (
     <div className="mt-4 border-t pt-4 space-y-3 text-black" dir="rtl">
@@ -38,7 +43,7 @@ function SubformConfigPanel({
           onChange={(e) => setCfg({ subformCode: e.target.value })}
         >
           <option value="">— انتخاب فرم —</option>
-          {allForms.map((form) => (
+          {availableForms.map((form) => (
             <option key={form.code} value={form.code}>
               {form.titleFa} ({form.code})
             </option>
@@ -173,7 +178,6 @@ const FIELD_TYPES = [
   { v: 'kardexItem', t: 'کاردکس کالا' },
   { v: 'tableSelect', t: 'انتخاب از جدول' },
   { v: 'subform', t: 'فرم تکرارشونده' },
-  { v: 'group', t: 'گروه تکرارشونده' },
 ];
 
 export default function FormBuilder({
@@ -451,6 +455,7 @@ export default function FormBuilder({
                 <SubformConfigPanel
                   field={f}
                   allForms={allForms}
+                  currentFormCode={form.code}
                   onChange={(nextConfig) => updateField(idx, { config: nextConfig })}
                 />
               )}

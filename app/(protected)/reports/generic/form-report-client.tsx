@@ -10,7 +10,8 @@ import EditEntryModal from '@/components/forms/EditEntryModal'; // Add this impo
 import { useSearchParams } from 'next/navigation';
 import type { FieldType } from '@prisma/client';
 import { FieldType as FieldTypeEnum } from '@prisma/client';
-import { en } from 'zod/locales';
+
+// ---- Helper functions that don't depend on component state ----
 
 // normalize string → Prisma FieldType (fallback: 'text')
 const toFieldType = (v: unknown): FieldType => {
@@ -51,7 +52,7 @@ type Meta = {
 };
 type EntryStatus = 'draft' | 'submitted' | 'confirmed' | 'finalConfirmed';
 type Row = { id: string; createdAt: string; status: EntryStatus; payload: Record<string, any> };
-type SchemaField = { key: string; type: string; config?: any };
+type SchemaField = { key: string; type: string; labelFa?: string; config?: any };
 
 // ---- Status helpers (shared by UI) ----
 const LOCKED_STATUSES: EntryStatus[] = ['confirmed', 'finalConfirmed'];
@@ -73,7 +74,6 @@ function statusFa(s: EntryStatus) {
       return 'تأیید نهایی';
   }
 }
-
 // Persian labels for booleans (accepts true/false, "true"/"false", 1/0)
 function boolFa(v: any) {
   const t = typeof v;
@@ -85,6 +85,26 @@ function boolFa(v: any) {
   return String(v);
 }
 
+// Add toEnglishDigits function if not already present
+function toEnglishDigits(s: string): string {
+  if (!s) return s;
+  const persianDigits = '۰۱۲۳۴۵۶۷۸۹';
+  const arabicDigits = '٠١٢٣٤٥٦٧٨٩';
+  let result = s;
+  
+  // Replace Persian digits
+  for (let i = 0; i < 10; i++) {
+    result = result.replace(new RegExp(persianDigits[i], 'g'), i.toString());
+  }
+  
+  // Replace Arabic digits
+  for (let i = 0; i < 10; i++) {
+    result = result.replace(new RegExp(arabicDigits[i], 'g'), i.toString());
+  }
+  
+  return result;
+}
+// ---- Main Component ----
 export default function FormReportClient({
   code,
   canSend = false, 
@@ -106,6 +126,272 @@ export default function FormReportClient({
     open: boolean;
     entry?: any;
   }>({ open: false });
+
+  // Update the subform modal state type
+  const [subformModal, setSubformModal] = useState<{
+    open: boolean;
+    fieldKey?: string;
+    fieldLabel?: string;
+    data?: any[];
+    schema?: SchemaField[];
+    displayMaps?: Record<string, Record<string, string>>; // Add this
+  }>({ open: false });
+
+  const ensureEntryLabel = async (id: string) => {
+    if (entryLabelCache[id]) return entryLabelCache[id];
+    try {
+      const r = await fetch(`/api/entries/${id}/summary`, { cache: 'no-store', credentials: 'include', });
+      const j = await r.json();
+      const label = j?.formTitle || 'مشاهده';
+      setEntryLabelCache((prev) => ({ ...prev, [id]: label }));
+      return label;
+    } catch {
+      return 'مشاهده';
+    }
+  };
+
+  // Define openEntryModal INSIDE the component
+  const openEntryModal = async (id: string) => {
+    setEntryModal({ open: true, id, loading: true, error: null });
+    try {
+      const r = await fetch(`/api/entries/${id}/summary`, { cache: 'no-store', credentials: 'include', });
+      const j = await r.json();
+      if (!r.ok || !j?.ok) throw new Error(j?.message || 'خطا');
+      setEntryModal({ open: true, id, loading: false, data: j, error: null });
+      // also cache label if not yet cached
+      if (j?.formTitle) {
+        setEntryLabelCache((prev) => (prev[id] ? prev : { ...prev, [id]: j.formTitle }));
+      }
+    } catch (e: any) {
+      setEntryModal({ open: true, id, loading: false, error: e?.message || 'خطا' });
+    }
+  };
+
+// Add this useEffect to trigger label fetching
+useEffect(() => {
+  if (subformModal.open && subformModal.data && subformModal.schema) {
+    // Check if we have fields that need labels
+    const needsLabels = subformModal.schema.some(f => 
+      ['tableSelect', 'kardexItem', 'select', 'multiselect'].includes(f.type)
+    );
+    
+    if (needsLabels) {
+      // Check if we already have some labels loaded
+      const hasSomeLabels = Object.keys(subformModal.displayMaps || {}).length > 0;
+      
+      if (!hasSomeLabels) {
+        console.log('Fetching labels for subform fields...');
+        fetchLabelsForSubform(subformModal.schema, subformModal.data);
+      }
+    }
+  }
+}, [subformModal.open, subformModal.data, subformModal.schema]);
+
+  // Replace the openSubformModal function with this version
+async function openSubformModal(fieldKey: string, data: any[]) {
+  const field = schema.find(s => s.key === fieldKey);
+  const fieldLabel = labels[fieldKey] || fieldKey;
+  
+  // Get subform code from field config
+  const subformCode = field?.config?.subformCode;
+  let subformSchema: SchemaField[] = [];
+  
+  if (subformCode) {
+    try {
+      // Fetch subform fields
+      const schemaResponse = await fetch(
+        `/api/forms/by-code/${encodeURIComponent(subformCode)}?include=fields`, 
+        { cache: 'no-store', credentials: 'include' }
+      );
+      
+      if (schemaResponse.ok) {
+        const result = await schemaResponse.json();
+        if (result.form?.fields) {
+          subformSchema = result.form.fields.map((f: any) => ({
+            key: f.key,
+            labelFa: f.labelFa,
+            type: f.type,
+            config: f.config || {}
+          }));
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load subform schema:', error);
+    }
+  }
+  
+  // Fallback: if no schema from API, create schema from data structure
+  if (subformSchema.length === 0 && data.length > 0) {
+    const firstRow = data[0];
+    if (firstRow && typeof firstRow === 'object') {
+      subformSchema = Object.keys(firstRow).map(key => ({
+        key,
+        labelFa: key,
+        type: 'text',
+        config: {}
+      }));
+    }
+  }
+  
+  setSubformModal({
+    open: true,
+    fieldKey,
+    fieldLabel,
+    data,
+    schema: subformSchema,
+    displayMaps: {} // Start with empty display maps
+  });
+  
+  // Fetch labels in the background
+  fetchLabelsForSubform(subformSchema, data);
+}
+
+const fetchLabelsForSubform = async (subformSchema: SchemaField[], data: any[]) => {
+  const labelsMap: Record<string, Record<string, string>> = {};
+  
+  // Process tableSelect fields
+  const tableSelectFields = subformSchema.filter(f => f.type === 'tableSelect');
+  
+  for (const field of tableSelectFields) {
+    const table = field.config?.tableSelect?.table;
+    const type = field.config?.tableSelect?.type;
+    
+    if (!table) continue;
+    
+    // Collect unique values for this field
+    const uniqueValues = new Set<string>();
+    data.forEach(row => {
+      const value = row[field.key];
+      if (value && value !== '') {
+        uniqueValues.add(String(value));
+      }
+    });
+    
+    if (uniqueValues.size === 0) continue;
+    
+    try {
+      // Use the correct API endpoint for table select items
+      const url = new URL('/api/table-select/items', window.location.origin);
+      url.searchParams.set('table', table);
+      if (type) {
+        url.searchParams.set('type', type);
+      }
+      
+      const response = await fetch(url.toString(), { 
+        cache: 'no-store', 
+        credentials: 'include' 
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        if (result.ok && Array.isArray(result.items)) {
+          // Create a lookup map from the items
+          const itemLookup: Record<string, string> = {};
+          result.items.forEach((item: any) => {
+            if (item.code && item.title) {
+              itemLookup[item.code] = item.title;
+            }
+          });
+          
+          // Apply labels to our field
+          if (!labelsMap[field.key]) {
+            labelsMap[field.key] = {};
+          }
+          
+          uniqueValues.forEach(value => {
+            labelsMap[field.key][value] = itemLookup[value] || value;
+          });
+          
+          console.log(`Loaded ${Object.keys(itemLookup).length} items for table ${table}`);
+        }
+      } else {
+        console.error(`Failed to fetch items for table ${table}:`, response.status);
+      }
+    } catch (error) {
+      console.error(`Error fetching items for table ${table}:`, error);
+    }
+  }
+  
+  // Process kardexItem fields
+  const kardexFields = subformSchema.filter(f => f.type === 'kardexItem');
+  
+  for (const field of kardexFields) {
+    // Collect unique values for this field
+    const uniqueValues = new Set<string>();
+    data.forEach(row => {
+      const value = row[field.key];
+      if (value && value !== '') {
+        uniqueValues.add(String(value));
+      }
+    });
+    
+    if (uniqueValues.size === 0) continue;
+    
+    try {
+      // Use the correct API endpoint for kardex items
+      const codes = Array.from(uniqueValues).join(',');
+      const response = await fetch(`/api/kardex/items?codes=${encodeURIComponent(codes)}`, { 
+        cache: 'no-store', 
+        credentials: 'include' 
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        if (result.ok && Array.isArray(result.items)) {
+          // Create a lookup map from the items
+          const itemLookup: Record<string, string> = {};
+          result.items.forEach((item: any) => {
+            if (item.code && item.nameFa) {
+              itemLookup[item.code] = item.nameFa;
+            }
+          });
+          
+          // Apply labels to our field
+          if (!labelsMap[field.key]) {
+            labelsMap[field.key] = {};
+          }
+          
+          uniqueValues.forEach(value => {
+            labelsMap[field.key][value] = itemLookup[value] || value;
+          });
+          
+          console.log(`Loaded ${Object.keys(itemLookup).length} kardex items`);
+        }
+      } else {
+        console.error(`Failed to fetch kardex items:`, response.status);
+      }
+    } catch (error) {
+      console.error(`Error fetching kardex items:`, error);
+    }
+  }
+  
+  // Process select fields (get labels from config options)
+  const selectFields = subformSchema.filter(f => f.type === 'select' || f.type === 'multiselect');
+  
+  for (const field of selectFields) {
+    const options = field.config?.options || [];
+    if (options.length > 0) {
+      if (!labelsMap[field.key]) {
+        labelsMap[field.key] = {};
+      }
+      
+      options.forEach((opt: any) => {
+        if (opt.value && opt.label) {
+          labelsMap[field.key][String(opt.value)] = opt.label;
+        }
+      });
+    }
+  }
+  
+  // Update the modal with fetched labels
+  if (Object.keys(labelsMap).length > 0) {
+    console.log('Fetched labels:', labelsMap);
+    setSubformModal(prev => ({
+      ...prev,
+      displayMaps: { ...prev.displayMaps, ...labelsMap }
+    }));
+  }
+};
 
   // Derive from server meta (no extra state → no flicker/race)
   const canSendClient = useMemo(
@@ -254,6 +540,64 @@ export default function FormReportClient({
     }
   }
 
+  const renderSubformCell = (
+  field: SchemaField, 
+  value: any, 
+  displayMaps?: Record<string, Record<string, string>>
+): React.ReactNode => {
+  if (value == null || value === '') return '-';
+  
+  const t = field.type;
+  const valueStr = String(value);
+  
+  // checkbox/boolean
+  if (t === 'checkbox') {
+    return boolFa(value);
+  }
+  
+  // date/datetime
+  if (t === 'date' && value) return formatJalali(value, false);
+  if (t === 'datetime' && value) return formatJalali(value, true);
+  
+  // number - convert Persian/Arabic digits to English
+  if (t === 'number') {
+    return toEnglishDigits(valueStr);
+  }
+  
+  // select - get label from options
+  if (t === 'select') {
+    const options = field.config?.options || [];
+    const option = options.find((opt: any) => String(opt.value) === valueStr);
+    return option?.label || valueStr;
+  }
+  
+  // multiselect
+  if (t === 'multiselect' && Array.isArray(value)) {
+    const options = field.config?.options || [];
+    return value.map(v => {
+      const option = options.find((opt: any) => String(opt.value) === String(v));
+      return option?.label || String(v);
+    }).join('، ');
+  }
+  
+  // tableSelect, kardexItem - use display maps
+  if (t === 'tableSelect' || t === 'kardexItem') {
+    // Try to find the label in display maps
+    const label = displayMaps?.[field.key]?.[valueStr];
+    
+    // Return the label if found and different from value
+    if (label && label !== valueStr) {
+      return label;
+    }
+    
+    // If no label found, show the code (without extra styling)
+    return valueStr;
+  }
+  
+  // For all other types, return string value
+  return valueStr;
+};
+
   // Generic value renderer for modal/export (maps + date formats)
   function renderValueGeneric(
     key: string,
@@ -334,6 +678,21 @@ export default function FormReportClient({
     if (t === 'date' && value) return formatJalali(value, false);
     if (t === 'datetime' && value) return formatJalali(value, true);
 
+    // subform -> clickable link that shows content in modal
+    if (t === 'subform' && Array.isArray(value)) {
+      const count = value.length;
+      return (
+        <button
+          type="button"
+          className="text-blue-600 hover:underline"
+          onClick={() => openSubformModal(key, value)}
+          title="مشاهده محتوای فرم تکراری"
+        >
+          {count} مورد
+        </button>
+      );
+    }
+
     // select/multiselect/kardexItem label maps
     const map = displayMaps?.[key];
     if (Array.isArray(value)) {
@@ -388,7 +747,11 @@ export default function FormReportClient({
       );
       return texts.join('، ');
     }
-
+    // subform -> show count in export
+    if (t === 'subform') {
+      const count = Array.isArray(raw) ? raw.length : 0;
+      return `${count} ردیف`;
+    }
     // dates / selects / tableSelect / kardexItem handled via generic renderer
     const rendered = renderValueGeneric(key, raw, schemaArr, displayMaps);
     return String(rendered ?? '');
@@ -858,11 +1221,87 @@ export default function FormReportClient({
       />
     )}
 
-    </div>
+    {/* Subform details modal */}
+    <Modal 
+      open={subformModal.open} 
+      onClose={() => setSubformModal({ open: false })}
+      size="lg"
+    >
+      {subformModal.data && (
+        <div dir="rtl" className="space-y-4">
+          <div className="flex justify-between items-center">
+            <div className="font-bold text-lg">{subformModal.fieldLabel || 'فرم تکراری'}</div>
+            
+          </div>
+          
+          <div className="text-sm text-gray-500">
+            تعداد ردیف‌ها: {subformModal.data.length}
+          </div>
+          
+          {subformModal.schema && subformModal.schema.length > 0 ? (
+            <>
+              {/* Debug info */}
+              {DEBUG && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded p-2 text-xs">
+                  <div>Schema fields: {subformModal.schema.map(f => `${f.key}(${f.type})`).join(', ')}</div>
+                  <div>Display maps keys: {Object.keys(subformModal.displayMaps || {}).join(', ')}</div>
+                </div>
+              )}
+              
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm border">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="p-2 border text-right">ردیف</th>
+                      {subformModal.schema.map((field, idx) => (
+                        <th key={field.key || idx} className="p-2 border text-right">
+                          {field.labelFa || field.key}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {subformModal.data.map((row: any, rowIndex: number) => (
+                      <tr key={rowIndex} className="border-t hover:bg-gray-50">
+                        <td className="p-2 border text-center">{rowIndex + 1}</td>
+                        {subformModal.schema!.map((field, colIndex) => {
+                          const value = row[field.key];
+                          return (
+                            <td key={`${rowIndex}-${colIndex}`} className="p-2 border">
+                              {renderSubformCell(field, value, subformModal.displayMaps)}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              
+              {/* Show note if some fields still show codes */}
+              {Object.keys(subformModal.displayMaps || {}).length === 0 && (
+                <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
+                  <p>در حال دریافت اطلاعات کالاها و واحدها... ممکن است کدها به جای نام نمایش داده شوند.</p>
+                </div>
+              )}
+            </>
+          ) : (
+            // Fallback: show raw data if schema is not available
+            <div className="bg-gray-50 p-4 rounded-md">
+              <div className="text-sm text-gray-600 mb-2">طرح‌بندی فرم در دسترس نیست. داده‌ها به صورت خام نمایش داده می‌شوند:</div>
+              <pre className="text-xs bg-white p-3 rounded border overflow-auto max-h-96">
+                {JSON.stringify(subformModal.data, null, 2)}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+    </Modal>
+  </div>
   );
+}
 
   // ---- Inline helpers/components ----
-
   function TableSelectFilter({
     label,
     table,
@@ -938,62 +1377,45 @@ export default function FormReportClient({
     );
   }
 
-  async function ensureEntryLabel(id: string) {
-    if (entryLabelCache[id]) return entryLabelCache[id];
-    try {
-      const r = await fetch(`/api/entries/${id}/summary`, { cache: 'no-store', credentials: 'include', });
-      const j = await r.json();
-      const label = j?.formTitle || 'مشاهده';
-      setEntryLabelCache((prev) => ({ ...prev, [id]: label }));
-      return label;
-    } catch {
-      return 'مشاهده';
-    }
-  }
-
-  async function openEntryModal(id: string) {
-    setEntryModal({ open: true, id, loading: true, error: null });
-    try {
-      const r = await fetch(`/api/entries/${id}/summary`, { cache: 'no-store', credentials: 'include', });
-      const j = await r.json();
-      if (!r.ok || !j?.ok) throw new Error(j?.message || 'خطا');
-      setEntryModal({ open: true, id, loading: false, data: j, error: null });
-      // also cache label if not yet cached
-      if (j?.formTitle) {
-        setEntryLabelCache((prev) => (prev[id] ? prev : { ...prev, [id]: j.formTitle }));
-      }
-    } catch (e: any) {
-      setEntryModal({ open: true, id, loading: false, error: e?.message || 'خطا' });
-    }
-  }
-
   function Modal({
-    open,
-    onClose,
-    children,
-  }: {
-    open: boolean;
-    onClose: () => void;
-    children: React.ReactNode;
-  }) {
-    if (!open) return null;
-    return (
-      <div className="fixed inset-0 z-50">
-        <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-        <div className="absolute inset-0 flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl rounded-xl bg-white shadow-lg border p-4 overflow-auto max-h-[80vh]">
-            <div className="text-left">
-              <button
-                className="text-sm text-gray-500 hover:text-gray-700"
-                onClick={onClose}
-              >
-                بستن
-              </button>
-            </div>
-            <div className="mt-2">{children}</div>
+  open,
+  onClose,
+  children,
+  size = 'md', // Add size prop
+}: {
+  open: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+  size?: 'sm' | 'md' | 'lg' | 'xl'; // Add size options
+}) {
+  if (!open) return null;
+  
+  const sizeClasses = {
+    sm: 'max-w-md',
+    md: 'max-w-lg',
+    lg: 'max-w-3xl',
+    xl: 'max-w-5xl'
+  };
+  
+  return (
+    <div className="fixed inset-0 z-50">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="absolute inset-0 flex items-center justify-center p-4">
+        <div 
+          className={`w-full ${sizeClasses[size]} rounded-xl bg-white shadow-lg border p-4 overflow-auto max-h-[80vh]`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="text-left">
+            <button
+            className="text-sm bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1 rounded"
+              onClick={onClose}
+            >
+              بستن
+            </button>
           </div>
+          <div className="mt-2">{children}</div>
         </div>
       </div>
-    );
-  }
-}
+    </div>
+  );
+ }

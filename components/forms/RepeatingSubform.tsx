@@ -254,7 +254,16 @@ function SubformField({
           onChange={(e) => {
             const raw = e.target.value;
             const cleaned = raw.replace(/[^\d۰-۹٠-٩\.\u066B\u060C\u066C-]/g, '');
-            onChange(cleaned);
+            // Convert Farsi/Arabic digits to English immediately
+            const converted = toEnglishDigits(cleaned);
+            onChange(converted);
+          }}
+          onBlur={(e) => {
+            // Also convert on blur to handle any remaining Persian/Arabic digits
+            const converted = toEnglishDigits(e.target.value);
+            if (converted !== e.target.value) {
+              onChange(converted);
+            }
           }}
           placeholder={cfg.placeholder ?? ''}
         />

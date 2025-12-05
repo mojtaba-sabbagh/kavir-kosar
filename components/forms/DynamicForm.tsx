@@ -213,6 +213,24 @@ export default function DynamicForm({ form, fields }: Props) {
         const en = toEnglishDigits(String(raw));
         const n = (f.config as any)?.decimals ? parseFloat(en) : parseInt(en, 10);
         out[f.key] = Number.isFinite(n) ? n : null;
+      } else if (f.type === 'subform' && Array.isArray(out[f.key])) {
+        // Get subform fields from dynamically loaded definitions
+        const subformFields = subformDefs[f.key] || [];
+        // Coerce values in each subform row
+        out[f.key] = out[f.key].map((row: Record<string, any>) => {
+          const coercedRow: Record<string, any> = { ...row };
+          for (const sf of subformFields) {
+            if (sf.type === 'number') {
+              const raw = coercedRow[sf.key];
+              if (raw === '' || raw == null) { coercedRow[sf.key] = null; continue; }
+              // Convert Farsi/Arabic digits to English first
+              const en = toEnglishDigits(String(raw));
+              const n = (sf.config as any)?.decimals ? parseFloat(en) : parseInt(en, 10);
+              coercedRow[sf.key] = Number.isFinite(n) ? n : null;
+            }
+          }
+          return coercedRow;
+        });
       }
     }
     return out;

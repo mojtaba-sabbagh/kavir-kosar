@@ -10,11 +10,33 @@ import type { FieldType, FormField } from '@prisma/client';
  * - date/datetime are strings (ISO) — keep server control
  */
 
+// Convert Farsi and Arabic digits to English
+function toEnglishDigits(str: string): string {
+  if (!str) return str;
+  const ARABIC_INDIC = '٠١٢٣٤٥٦٧٨٩';
+  const PERSIAN = '۰۱۲۳۴۵۶۷۸۹';
+  
+  let result = String(str)
+    .replace(/\u066C|,/g, '')  // Remove Arabic comma
+    .replace(/\u066B|\u060C/g, '.');  // Replace Arabic decimal with dot
+  
+  result = result
+    .replace(/[۰-۹]/g, d => String(PERSIAN.indexOf(d)))
+    .replace(/[٠-٩]/g, d => String(ARABIC_INDIC.indexOf(d)));
+  
+  return result.trim();
+}
+
 function zodForAtomicField(f: any): z.ZodTypeAny {
   switch (f.type) {
     case 'text': return z.string().trim();
     case 'textarea': return z.string();
-    case 'number': return z.preprocess(v => (v === '' ? undefined : Number(v)), z.number());
+    case 'number': return z.preprocess(v => {
+      if (v === '' || v == null) return undefined;
+      const str = String(v);
+      const en = toEnglishDigits(str);
+      return Number(en);
+    }, z.number());
     case 'date': return z.string().regex(/^\d{4}-\d{2}-\d{2}/);
     case 'datetime': return z.string(); // ISO
     case 'select': return z.string();

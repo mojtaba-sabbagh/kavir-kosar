@@ -6,7 +6,8 @@ import { useEffect, useMemo, useRef, useState} from 'react'
 import { useRouter } from 'next/navigation';
 import JDateRangeFilter from '@/components/ui/JDateRangeFilter';
 import JDateTimeRangeFilter from '@/components/ui/JDateTimeRangeFilter';
-import EditEntryModal from '@/components/forms/EditEntryModal'; // Add this import
+import EditEntryModal from '@/components/forms/EditEntryModal';
+import PrintEntry from './components/PrintEntry';
 import { useSearchParams } from 'next/navigation';
 import type { FieldType } from '@prisma/client';
 import { FieldType as FieldTypeEnum } from '@prisma/client';
@@ -135,6 +136,12 @@ export default function FormReportClient({
     data?: any[];
     schema?: SchemaField[];
     displayMaps?: Record<string, Record<string, string>>; // Add this
+  }>({ open: false });
+
+  // Add this near your other state declarations
+  const [printModal, setPrintModal] = useState<{
+    open: boolean;
+    entry?: any;
   }>({ open: false });
 
   const ensureEntryLabel = async (id: string) => {
@@ -425,7 +432,6 @@ const fetchLabelsForSubform = async (subformSchema: SchemaField[], data: any[]) 
 
   // cache for link labels to avoid refetch each render
   const [entryLabelCache, setEntryLabelCache] = useState<Record<string, string>>({});
-
   // trigger refetch after mutations
   const [reloadTick, setReloadTick] = useState(0);
   const refresh = () => setReloadTick((t) => t + 1);
@@ -1111,6 +1117,14 @@ const fetchLabelsForSubform = async (subformSchema: SchemaField[], data: any[]) 
                       >
                         🗑
                       </button>
+                      <button
+                        type="button"
+                        className="rounded border px-2 py-1 text-xs hover:bg-gray-50"
+                        onClick={() => setPrintModal({ open: true, entry: r })}
+                        title="چاپ"
+                    >
+                      🖨️
+                    </button>
                     </div>
                   ) : (
                     <span className="text-xs text-gray-400">—</span>
@@ -1170,6 +1184,17 @@ const fetchLabelsForSubform = async (subformSchema: SchemaField[], data: any[]) 
           </div>
         )}
       </Modal>
+    
+    {printModal.open && printModal.entry && (
+      <PrintEntry
+        entry={printModal.entry}
+        schema={schemaArr}
+        labels={labels}
+        displayMaps={displayMaps}
+        isOpen={printModal.open}
+        onClose={() => setPrintModal({ open: false })}
+      />
+    )}
 
     {editModal.open && editModal.entry && (
       <EditEntryModal

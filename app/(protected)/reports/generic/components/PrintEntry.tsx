@@ -347,8 +347,6 @@ export default function PrintEntry({
       </head>
       <body class="print:font-IRYekan print:text-base print:leading-loose print:text-black print:dir-rtl print:m-0 print:p-0">
         <div class="page-content print:w-full print:h-full print:relative print:box-border">
-          <!-- تاریخ در گوشه بالا راست -->
-          <div class="print-date print:fixed print:top-[1cm] print:left-[1cm] print:text-[10pt] print:font-IRYekan print:z-[9999] print:dir-ltr print:text-left print:m-0 print:p-0">${dateValue}</div>
           <!-- محتوای اصلی -->
           <div class="main-content print:p-[4cm_2cm_2cm_3cm] print:m-0 print:box-border">
             ${content}

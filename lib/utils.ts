@@ -1,4 +1,6 @@
 // Persian labels for booleans (accepts true/false, "true"/"false", 1/0)
+// @/lib/utils.ts
+
 export function boolFa(v: any) {
   const t = typeof v;
   if (v == null) return '';                 // keep empty for null/undefined

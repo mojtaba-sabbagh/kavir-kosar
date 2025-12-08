@@ -1,3 +1,5 @@
+// app/admin/forms/[id]/builder/form-builder.tsx
+
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -5,6 +7,24 @@ import FormReportConfig, { ReportConfig } from '@/components/reports/FormReportC
 import TableSelectConfigPanel from '@/components/forms/TableSelectConfigPanel';
 
 type AllFormLite = { code: string; titleFa: string };
+type FormFieldDefinition = { key: string; labelFa: string; type: string };
+
+// --- Add this helper function to fetch form fields ---
+async function fetchFormFields(formCode: string): Promise<FormFieldDefinition[]> {
+  try {
+    const res = await fetch(`/api/forms/by-code/${encodeURIComponent(formCode)}?include=fields`);
+    if (!res.ok) throw new Error('Failed to fetch form fields');
+    const { form } = await res.json();
+    return (form?.fields || []).map((f: any) => ({
+      key: f.key,
+      labelFa: f.labelFa,
+      type: f.type
+    }));
+  } catch (error) {
+    console.error(`Failed to fetch fields for form ${formCode}:`, error);
+    return [];
+  }
+}
 
 // --- Subform config panel for 'subform' fields ---
 function SubformConfigPanel({
@@ -162,7 +182,6 @@ type Field = {
 };
 type FormInfo = { id: string; code: string; titleFa: string; isActive: boolean; sortOrder: number; version: number };
 
-
 const FIELD_TYPES = [
   { v: 'text', t: 'متن' },
   { v: 'textarea', t: 'چندخطی' },
@@ -179,6 +198,164 @@ const FIELD_TYPES = [
   { v: 'tableSelect', t: 'انتخاب از جدول' },
   { v: 'subform', t: 'فرم تکرارشونده' },
 ];
+
+// --- Add this component for entryRef configuration ---
+function EntryRefConfigPanel({
+  field,
+  allForms,
+  formFieldsCache,
+  onFetchFormFields,
+  onChange, // ADD THIS PROP
+}: {
+  field: BuilderField;
+  allForms: AllFormLite[];
+  formFieldsCache: Record<string, FormFieldDefinition[]>;
+  onFetchFormFields: (formCode: string) => Promise<void>;
+  onChange: (nextConfig: any) => void; // ADD THIS
+}) {
+  const cfg = field.config ?? {};
+  const allowedFormCodes: string[] = Array.isArray(cfg.allowedFormCodes) ? cfg.allowedFormCodes : [];
+  const displayFields: string[] = Array.isArray(cfg.displayFields) ? cfg.displayFields : ['titleFa'];
+
+  const setCfg = (patch: Partial<typeof cfg>) => {
+    onChange({
+      ...cfg,
+      ...patch,
+    });
+  };
+
+  // Get all available fields from selected forms
+  const allAvailableFields: FormFieldDefinition[] = [];
+  allowedFormCodes.forEach(formCode => {
+    const fields = formFieldsCache[formCode] || [];
+    allAvailableFields.push(...fields);
+  });
+
+  // Remove duplicates (fields with same key)
+  const uniqueFields = Array.from(
+    new Map(allAvailableFields.map(field => [field.key, field])).values()
+  );
+
+  // Get form name for display
+  const getFormName = (formCode: string) => {
+    const form = allForms.find(f => f.code === formCode);
+    return form ? `${form.titleFa} (${form.code})` : formCode;
+  };
+
+  // Handle form selection change
+  const handleAllowedFormsChange = async (selectedCodes: string[]) => {
+    setCfg({ allowedFormCodes: selectedCodes });
+    
+    // Fetch fields for newly selected forms that aren't in cache
+    for (const formCode of selectedCodes) {
+      if (!formFieldsCache[formCode]) {
+        await onFetchFormFields(formCode);
+      }
+    }
+  };
+
+  return (
+    <div className="mt-3 space-y-4">
+      <div>
+        <label className="block text-sm mb-1">فرم‌های مجاز برای ارجاع</label>
+        <select
+          multiple
+          className="w-full border rounded-md px-3 py-2"
+          dir="rtl"
+          value={allowedFormCodes}
+          onChange={(e) => {
+            const selected = Array.from(e.target.selectedOptions).map(o => o.value);
+            handleAllowedFormsChange(selected);
+          }}
+        >
+          {allForms.map(af => (
+            <option key={af.code} value={af.code}>
+              {af.titleFa} ({af.code})
+            </option>
+          ))}
+        </select>
+        <div className="text-xs text-gray-500 mt-1">
+          برای انتخاب چندگانه، کلید Ctrl (یا Cmd در Mac) را نگه دارید
+        </div>
+      </div>
+
+      {/* Display selected forms with their fields */}
+      {allowedFormCodes.length > 0 && (
+        <div className="bg-gray-50 rounded-md p-3">
+          <div className="text-sm font-medium mb-2">فرم‌های انتخاب شده:</div>
+          <div className="space-y-2">
+            {allowedFormCodes.map(formCode => {
+              const fields = formFieldsCache[formCode] || [];
+              const isLoading = !formFieldsCache[formCode];
+              
+              return (
+                <div key={formCode} className="border rounded p-2">
+                  <div className="font-medium text-sm">
+                    {getFormName(formCode)}
+                    {isLoading && <span className="text-xs text-gray-500 mr-2"> (در حال بارگذاری...)</span>}
+                  </div>
+                  {fields.length > 0 ? (
+                    <div className="text-xs text-gray-600 mt-1">
+                      فیلدهای موجود: {fields.map(f => f.labelFa).join('، ')}
+                    </div>
+                  ) : !isLoading && (
+                    <div className="text-xs text-gray-500 mt-1">فیلدی یافت نشد</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Display field selection */}
+      {uniqueFields.length > 0 && (
+        <div>
+          <label className="block text-sm mb-1">فیلدها برای نمایش و جستجو</label>
+          <select
+            multiple
+            className="w-full border rounded-md px-3 py-2"
+            value={displayFields}
+            onChange={(e) => {
+              const selected = Array.from(e.target.selectedOptions).map(o => o.value);
+              setCfg({ displayFields: selected });
+            }}
+          >
+            {/* Always include common fields */}
+            <option value="id">شناسه (id)</option>
+            <option value="titleFa">عنوان (titleFa)</option>
+            <option value="code">کد (code)</option>
+            
+            {/* Dynamic fields from selected forms */}
+            {uniqueFields
+              .filter(f => !['id', 'titleFa', 'code'].includes(f.key)) // Don't duplicate common fields
+              .map(field => (
+                <option key={field.key} value={field.key}>
+                  {field.labelFa} ({field.key}) - {field.type}
+                </option>
+              ))}
+          </select>
+          <div className="text-xs text-gray-500 mt-1">
+            فیلدهایی که باید نمایش داده شوند (با خط تیره جدا می‌شوند)
+          </div>
+          <div className="text-xs text-gray-500">
+            جستجو در همه فیلدهای انتخاب شده انجام می‌شود
+          </div>
+        </div>
+      )}
+
+      <div>
+        <label className="block text-sm mb-1">برچسب رابطه (اختیاری)</label>
+        <input
+          className="w-full border rounded-md px-3 py-2"
+          value={cfg.relation ?? ''}
+          onChange={(e) => setCfg({ relation: e.target.value })}
+          placeholder="مثلا: محصول مرتبط، مشتری، etc."
+        />
+      </div>
+    </div>
+  );
+}
 
 export default function FormBuilder({
   form: initialForm,
@@ -198,6 +375,9 @@ export default function FormBuilder({
   const [err, setErr] = useState<string|null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  
+  // Add state for form fields cache
+  const [formFieldsCache, setFormFieldsCache] = useState<Record<string, FormFieldDefinition[]>>({});
 
   const deleteForm = async () => {
     if (!confirm('آیا از حذف این فرم مطمئن هستید؟')) return;
@@ -223,6 +403,17 @@ export default function FormBuilder({
     setFields(prev => prev.map((f,i)=> i===idx ? { ...f, ...patch } : f));
   };
 
+  // Function to fetch and cache form fields
+  const fetchAndCacheFormFields = async (formCode: string) => {
+    if (formFieldsCache[formCode]) return; // Already cached
+    
+    const fields = await fetchFormFields(formCode);
+    setFormFieldsCache(prev => ({
+      ...prev,
+      [formCode]: fields
+    }));
+  };
+
   const saveForm = async () => {
     setSaving(true); setMsg(null); setErr(null);
     try {
@@ -232,8 +423,6 @@ export default function FormBuilder({
         body: JSON.stringify({ titleFa: form.titleFa, isActive: form.isActive, sortOrder: form.sortOrder })
       });
       if (!res1.ok) throw new Error((await res1.json().catch(()=>({}))).message || 'خطا در ذخیره فرم');
-
-      // (optional) the PUT may call ensureReportForForm server-side; if not, keep step 2/2.5
 
       // 2) Save fields (bulk upsert)
       const res2 = await fetch(`/api/admin/forms/${form.id}/fields`, {
@@ -414,36 +603,15 @@ export default function FormBuilder({
               )}
 
               {['entryRef', 'entryRefMulti'].includes(f.type) && (
-                <div className="mt-3 space-y-2">
-                  <label className="block text-sm">فرم‌های مجاز برای ارجاع</label>
-
-                  <select
-                    multiple
-                    className="w-full border rounded-md px-3 py-2"
-                    dir="rtl"
-                    value={Array.isArray(f.config?.allowedFormCodes) ? f.config.allowedFormCodes : []}
-                    onChange={(e) => {
-                      const selected = Array.from(e.target.selectedOptions).map(o => o.value);
-                      updateField(idx, { config: { ...(f.config ?? {}), allowedFormCodes: selected } });
-                    }}
-                  >
-                    {allForms.map(af => (
-                      <option key={af.code} value={af.code}>
-                        {af.titleFa} ({af.code})
-                      </option>
-                    ))}
-                  </select>
-
-                  <label className="block text-sm mt-2 mb-1">برچسب رابطه (اختیاری)</label>
-                  <input
-                    className="w-full border rounded-md px-3 py-2"
-                    value={f.config?.relation ?? ''}
-                    onChange={(e) =>
-                      updateField(idx, { config: { ...(f.config ?? {}), relation: e.target.value } })
-                    }
+                  <EntryRefConfigPanel
+                    field={f}
+                    allForms={allForms}
+                    formFieldsCache={formFieldsCache}
+                    onFetchFormFields={fetchAndCacheFormFields}
+                    onChange={(nextConfig) => updateField(idx, { config: nextConfig })}
                   />
-                </div>
-              )}
+                )}
+
               {f.type === 'kardexItem' && (
                 <KardexConfigPanel
                   field={f}
@@ -670,27 +838,39 @@ function FieldConfigPanel({ field, updateField, idx }: {
         );
 
       case 'multiselect':
+      case 'entryRefMulti':
         return (
           <div>
             <label className="block text-sm mb-1">مقادیر پیش‌فرض</label>
-            <select
-              multiple
+            <input
               className="w-full border rounded-md px-3 py-2"
-              value={Array.isArray(cfg.defaultValue) ? cfg.defaultValue : []}
+              value={Array.isArray(cfg.defaultValue) ? cfg.defaultValue.join(', ') : ''}
               onChange={(e) => {
-                const selected = Array.from(e.target.selectedOptions).map(o => o.value);
-                setConfig({ defaultValue: selected });
+                const value = e.target.value;
+                // Convert comma-separated string to array
+                const arr = value.split(',').map(v => v.trim()).filter(v => v);
+                setConfig({ defaultValue: arr });
               }}
-            >
-              {(cfg.options ?? []).map((opt: any) => (
-                <option key={String(opt.value)} value={String(opt.value)}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
+              placeholder="مقادیر با کاما جدا شوند (value1, value2, ...)"
+            />
             <div className="text-xs text-gray-500 mt-1">
-              برای انتخاب چندگانه، کلید Ctrl را نگه دارید
+              {field.type === 'entryRefMulti' 
+                ? 'شناسه‌های ورودی را با کاما جدا کنید' 
+                : 'مقادیر را با کاما جدا کنید'}
             </div>
+          </div>
+        );
+
+      case 'entryRef':
+        return (
+          <div>
+            <label className="block text-sm mb-1">مقدار پیش‌فرض (ID ورودی)</label>
+            <input
+              className="w-full border rounded-md px-3 py-2"
+              value={cfg.defaultValue ?? ''}
+              onChange={(e) => setConfig({ defaultValue: e.target.value })}
+              placeholder="شناسه ورودی (ID)"
+            />
           </div>
         );
 

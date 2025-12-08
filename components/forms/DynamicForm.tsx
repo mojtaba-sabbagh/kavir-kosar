@@ -1,3 +1,5 @@
+//@component/forms/DynamicForm.tsx
+
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -5,6 +7,7 @@ import type { Form, FormField, FieldType } from '@prisma/client';
 import { isLtrField, optionLabel } from '@/lib/forms/field-utils';
 import KardexPicker from './KardexPicker';
 import JDatePicker from '@/components/ui/JDatePicker';
+import { formatJalali } from '@/lib/date-utils';
 import JDateTimePicker from '@/components/ui/JDateTimePicker';
 import TableSelectInput from './inputs/TableSelectInput';
 import RepeatingSubform from './RepeatingSubform';
@@ -76,10 +79,12 @@ function resolveDefaultValue(field: Pick<FormField, 'type' | 'config'>): any {
       return cfg.defaultValue === '' ? '' : Number(cfg.defaultValue);
 
     case 'multiselect':
+    case 'entryRefMulti':
       return Array.isArray(cfg.defaultValue) ? cfg.defaultValue : [];
 
     case 'tableSelect':
     case 'kardexItem':
+    case 'entryRef':
       return cfg.defaultValue || '';
 
     default:
@@ -89,6 +94,7 @@ function resolveDefaultValue(field: Pick<FormField, 'type' | 'config'>): any {
 
 function getEmptyValueForType(type: string): any {
   switch (type) {
+    case 'entryRefMulti':
     case 'multiselect':
       return [];
     case 'checkbox':
@@ -97,6 +103,7 @@ function getEmptyValueForType(type: string): any {
       return '';
     case 'tableSelect':
     case 'kardexItem':
+    case 'entryRef':
       return '';
     default:
       return '';
@@ -426,8 +433,9 @@ export default function DynamicForm({ form, fields }: Props) {
                 <div onFocus={handleFieldFocus}>
                   <EntryPicker
                     value={values[f.key] as string | undefined}
-                    onChange={(v)=>set(f.key, v)}
+                    onChange={(v) => set(f.key, v)}
                     allowedFormCodes={(cfg?.allowedFormCodes as string[] | undefined)}
+                    displayFields={cfg?.displayFields} // Pass displayFields from config
                   />
                 </div>
               )}
@@ -437,8 +445,9 @@ export default function DynamicForm({ form, fields }: Props) {
                 <div onFocus={handleFieldFocus}>
                   <EntryMultiPicker
                     value={(values[f.key] as string[] | undefined) ?? []}
-                    onChange={(arr)=>set(f.key, arr)}
+                    onChange={(arr) => set(f.key, arr)}
                     allowedFormCodes={(cfg?.allowedFormCodes as string[] | undefined)}
+                    displayFields={cfg?.displayFields} // Pass displayFields from config
                   />
                 </div>
               )}
@@ -504,27 +513,99 @@ function EntryPicker({
   value,
   onChange,
   allowedFormCodes,
-}: { value?: string; onChange: (v: string|undefined) => void; allowedFormCodes?: string[] }) {
-  const [items, setItems] = useState<{id:string; label:string}[]>([]);
+  displayFields = ['titleFa'],
+}: { 
+  value?: string; 
+  onChange: (v: string|undefined) => void; 
+  allowedFormCodes?: string[];
+  displayFields?: string[];
+}) {
+  const [items, setItems] = useState<{id: string; label: string; details: any}[]>([]);
   const [q, setQ] = useState('');
+  
   async function search() {
     const params = new URLSearchParams();
     if (q) params.set('q', q);
+    
+    // Pass displayFields to the API for searching
+    if (displayFields && displayFields.length > 0) {
+      displayFields.forEach(field => {
+        params.append('fields', field);
+      });
+    }
+    
+    // Request reference resolution
+    params.append('resolveRefs', 'true');
+    
     (allowedFormCodes ?? []).forEach(c => params.append('code', c));
-    const res = await fetch(`/api/entries/search?${params.toString()}`, { cache: 'no-store' });
-    const j = await res.json();
-    setItems((j.items ?? []).map((i:any)=>({id:i.id, label:i.label})));
+    
+    try {
+      const res = await fetch(`/api/entries/search?${params.toString()}`, { cache: 'no-store' });
+      const j = await res.json();
+      
+      // Create label from multiple fields
+      // The API now returns already-formatted values
+      setItems((j.items ?? []).map((item: any) => {
+        const labelParts = displayFields.map(field => {
+          const value = item[field];
+          return value || '';
+        }).filter(val => val !== '');
+        
+        const label = labelParts.length > 0 
+          ? labelParts.join(' - ')
+          : `ورودی ${item.id}`;
+        
+        return {
+          id: item.id,
+          label,
+          details: item // Store all details including _raw and _fieldInfo
+        };
+      }));
+    } catch (error) {
+      console.error('Search failed:', error);
+      setItems([]);
+    }
   }
+  
+  // Search on initial load and when displayFields change
+  useEffect(() => {
+    if (allowedFormCodes && allowedFormCodes.length > 0) {
+      search();
+    }
+  }, [allowedFormCodes?.join(','), displayFields?.join(',')]);
+  
   return (
     <div className="space-y-2">
       <div className="flex gap-2">
-        <input className="w-full rounded-md border px-3 py-2" dir="ltr" value={q} onChange={e=>setQ(e.target.value)} placeholder="جستجو..." />
-        <button type="button" className="rounded-md border px-3 py-2 hover:bg-gray-50" onClick={search}>جستجو</button>
+        <input 
+          className="w-full rounded-md border px-3 py-2" 
+          dir="ltr" 
+          value={q} 
+          onChange={e => setQ(e.target.value)} 
+          placeholder={`جستجو در ${displayFields?.join('، ') || 'فیلدها'}...`} 
+        />
+        <button type="button" className="rounded-md border px-3 py-2 hover:bg-gray-50" onClick={search}>
+          جستجو
+        </button>
       </div>
-      <select className="w-full rounded-md border px-3 py-2" dir="ltr" value={value ?? ''} onChange={e=>onChange(e.target.value || undefined)}>
+      <select 
+        className="w-full rounded-md border px-3 py-2" 
+        dir="ltr" 
+        value={value ?? ''} 
+        onChange={e => onChange(e.target.value || undefined)}
+      >
         <option value="">— انتخاب کنید —</option>
-        {items.map(it => <option key={it.id} value={it.id}>{it.label}</option>)}
+        {items.map(it => (
+          <option key={it.id} value={it.id} title={JSON.stringify(it.details, null, 2)}>
+            {it.label}
+          </option>
+        ))}
       </select>
+      {displayFields && displayFields.length > 0 && (
+        <div className="text-xs text-gray-500">
+          نمایش: {displayFields.join(' - ')}
+        </div>
+      )}
     </div>
   );
 }
@@ -533,35 +614,178 @@ function EntryMultiPicker({
   value,
   onChange,
   allowedFormCodes,
-}: { value: string[]; onChange: (v: string[]) => void; allowedFormCodes?: string[] }) {
-  const [items, setItems] = useState<{id:string; label:string}[]>([]);
+  displayFields = ['titleFa'],
+}: { 
+  value: string[]; 
+  onChange: (v: string[]) => void; 
+  allowedFormCodes?: string[];
+  displayFields?: string[];
+}) {
+  const [items, setItems] = useState<{id: string; label: string; details: any}[]>([]);
   const [q, setQ] = useState('');
+  
   async function search() {
     const params = new URLSearchParams();
     if (q) params.set('q', q);
+    
+    // Pass displayFields to the API for searching
+    if (displayFields && displayFields.length > 0) {
+      displayFields.forEach(field => {
+        params.append('fields', field);
+      });
+    }
+    
+    // Request reference resolution
+    params.append('resolveRefs', 'true');
+    
     (allowedFormCodes ?? []).forEach(c => params.append('code', c));
-    const res = await fetch(`/api/entries/search?${params.toString()}`, { cache: 'no-store' });
-    const j = await res.json();
-    setItems((j.items ?? []).map((i:any)=>({id:i.id, label:i.label})));
+    
+    try {
+      const res = await fetch(`/api/entries/search?${params.toString()}`, { cache: 'no-store' });
+      const j = await res.json();
+      
+      // Create label from multiple fields
+      // The API now returns already-formatted values
+      setItems((j.items ?? []).map((item: any) => {
+        const labelParts = displayFields.map(field => {
+          const value = item[field];
+          return value || '';
+        }).filter(val => val !== '');
+        
+        const label = labelParts.length > 0 
+          ? labelParts.join(' - ')
+          : `ورودی ${item.id}`;
+        
+        return {
+          id: item.id,
+          label,
+          details: item // Store all details including _raw and _fieldInfo
+        };
+      }));
+    } catch (error) {
+      console.error('Search failed:', error);
+      setItems([]);
+    }
   }
+  
+  // Search on initial load and when displayFields change
+  useEffect(() => {
+    if (allowedFormCodes && allowedFormCodes.length > 0) {
+      search();
+    }
+  }, [allowedFormCodes?.join(','), displayFields?.join(',')]);
+  
+  // Get label for a selected item
+  const getItemLabel = (id: string) => {
+    const item = items.find(it => it.id === id);
+    return item ? item.label : `ورودی ${id}`;
+  };
+
+  // Function to remove a selected item
+  const removeItem = (idToRemove: string) => {
+    onChange(value.filter(id => id !== idToRemove));
+  };
+
+  // Function to add items (when selected from dropdown)
+  const handleSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const selectedIds = Array.from(e.target.selectedOptions).map(option => option.value);
+    
+    // Add only new items that aren't already selected
+    const newItems = selectedIds.filter(id => !value.includes(id));
+    if (newItems.length > 0) {
+      onChange([...value, ...newItems]);
+    }
+  };
+
+  // Get currently selected items with their labels
+  const selectedItems = value.map(id => ({
+    id,
+    label: getItemLabel(id)
+  }));
+  
   return (
     <div className="space-y-2">
       <div className="flex gap-2">
-        <input className="w-full rounded-md border px-3 py-2" dir="ltr" value={q} onChange={e=>setQ(e.target.value)} placeholder="جستجو..." />
-        <button type="button" className="rounded-md border px-3 py-2 hover:bg-gray-50" onClick={search}>جستجو</button>
+        <input 
+          className="w-full rounded-md border px-3 py-2" 
+          dir="ltr" 
+          value={q} 
+          onChange={e => setQ(e.target.value)} 
+          placeholder={`جستجو در ${displayFields?.join('، ') || 'فیلدها'}...`} 
+        />
+        <button type="button" className="rounded-md border px-3 py-2 hover:bg-gray-50" onClick={search}>
+          جستجو
+        </button>
       </div>
+      
+      {/* Show selected items as chips */}
+      {selectedItems.length > 0 && (
+        <div className="bg-gray-50 rounded-md p-2">
+          <div className="text-xs text-gray-500 mb-1">موارد انتخاب شده ({selectedItems.length}):</div>
+          <div className="flex flex-wrap gap-1">
+            {selectedItems.map(({ id, label }) => (
+              <span 
+                key={id} 
+                className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded flex items-center gap-1"
+              >
+                {label}
+                <button 
+                  type="button"
+                  onClick={() => removeItem(id)}
+                  className="text-blue-600 hover:text-blue-800 text-sm font-bold"
+                  aria-label="حذف"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      
+      {/* Multi-select dropdown */}
       <select
         multiple
         className="w-full rounded-md border px-3 py-2"
         dir="ltr"
-        value={value}
-        onChange={e => {
-          const arr = Array.from(e.target.selectedOptions).map(o => o.value);
-          onChange(arr);
-        }}
+        value={[]} // Empty array because we handle selection via onChange
+        onChange={handleSelectChange}
+        size={Math.min(items.length, 6)} // Show up to 6 items at once
       >
-        {items.map(it => <option key={it.id} value={it.id}>{it.label}</option>)}
+        {items
+          .filter(item => !value.includes(item.id)) // Don't show already selected items
+          .map(it => (
+            <option key={it.id} value={it.id} title={JSON.stringify(it.details, null, 2)}>
+              {it.label}
+            </option>
+          ))}
       </select>
+      
+      {/* Instructions and field info */}
+      <div className="text-xs text-gray-500 space-y-1">
+        {displayFields && displayFields.length > 0 && (
+          <div>نمایش: {displayFields.join(' - ')}</div>
+        )}
+        <div>
+          برای انتخاب چندگانه، کلید Ctrl (یا Cmd در Mac) را نگه دارید
+          {selectedItems.length > 0 && (
+            <span className="mr-2"> | {selectedItems.length} مورد انتخاب شده</span>
+          )}
+        </div>
+      </div>
+
+      {/* Clear all button */}
+      {selectedItems.length > 0 && (
+        <div className="text-left">
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            className="text-xs text-red-600 hover:text-red-800 hover:underline"
+          >
+            حذف همه موارد
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -520,12 +520,42 @@ const fetchLabelsForSubform = async (subformSchema: SchemaField[], data: any[]) 
     return m;
   }, [schemaArr]);
 
-  const visible = useMemo(() => {
-    if (meta?.visibleColumns?.length) return meta.visibleColumns;
-    if (schemaArr.length) return schemaArr.map((f) => f.key);
-    if (rows[0]?.payload) return Object.keys(rows[0].payload);
-    return [];
-  }, [meta, schemaArr, rows]);
+ const visible = useMemo(() => {
+  // If meta has visibleColumns, use them (they should be in order)
+  if (meta?.visibleColumns?.length) {
+    // Filter out fields that don't exist in current schema
+    const filteredVisible = meta.visibleColumns.filter(key => 
+      schemaArr.some(f => f.key === key)
+    );
+    return filteredVisible;
+  }
+  
+  // Otherwise, use schema fields sorted by order
+  if (schemaArr.length) {
+    // Sort by order
+    const sortedSchema = [...schemaArr].sort((a, b) => {
+      const aOrder = getOrder(a, 0);
+      const bOrder = getOrder(b, 0);
+      return aOrder - bOrder;
+    });
+    
+    return sortedSchema.map((f) => f.key);
+  }
+  
+  // Fallback: use payload keys but filter by schema if available
+  if (rows[0]?.payload) {
+    const payloadKeys = Object.keys(rows[0].payload);
+    if (schemaArr.length > 0) {
+      // Only show keys that exist in current schema
+      return payloadKeys.filter(key => 
+        schemaArr.some(f => f.key === key)
+      );
+    }
+    return payloadKeys;
+  }
+  
+  return [];
+}, [meta, schemaArr, rows]);
 
   // Format persian date
   function formatJalali(dateLike: string | number | Date, withTime = false) {

@@ -155,38 +155,66 @@ export async function GET(
       : undefined;
 
     const report = await prisma.report.findFirst({ where: { formId: form.id } });
-    const visibleColumns: string[] = report?.visibleColumns ?? [];
-    const filterableKeys: string[] = report?.filterableKeys ?? [];
-    const orderableKeys: string[] = report?.orderableKeys ?? [];
-    const defaultOrder = (report?.defaultOrder as any) ?? null;
+// Get form fields sorted by order
+const sortedFormFields = form.fields.sort((a, b) => (a.order || 0) - (b.order || 0));
 
-    // helpers from schema
-    const typeByKey: Record<string, string> = {};
-    const labels: Record<string, string> = {};
-    for (const f of form.fields) {
-      typeByKey[f.key] = f.type as unknown as string;
-      labels[f.key] = f.labelFa;
+// Create a map for quick lookup of field order
+const fieldOrderMap = new Map<string, number>();
+sortedFormFields.forEach(field => {
+  fieldOrderMap.set(field.key, field.order || 0);
+});
+
+// Filter and sort visibleColumns by form field order
+let visibleColumns: string[] = [];
+if (report?.visibleColumns && report.visibleColumns.length > 0) {
+  // Filter to only include fields that exist in the form
+  visibleColumns = report.visibleColumns
+    .filter(key => fieldOrderMap.has(key))
+    .sort((a, b) => {
+      const orderA = fieldOrderMap.get(a) || 0;
+      const orderB = fieldOrderMap.get(b) || 0;
+      return orderA - orderB;
+    });
+} else {
+  // If no visibleColumns defined, use all form fields in order
+  visibleColumns = sortedFormFields.map(f => f.key);
+}
+
+const filterableKeys: string[] = report?.filterableKeys ?? [];
+const orderableKeys: string[] = report?.orderableKeys ?? [];
+const defaultOrder = (report?.defaultOrder as any) ?? null;
+
+// helpers from schema
+const typeByKey: Record<string, string> = {};
+const labels: Record<string, string> = {};
+for (const f of form.fields) {
+  typeByKey[f.key] = f.type as unknown as string;
+  labels[f.key] = f.labelFa;
+}
+
+// display maps for select/multiselect (from static options in config)
+const displayMaps: Record<string, Record<string, string>> = {};
+for (const f of form.fields) {
+  const cfg = (f.config ?? {}) as any;
+  const opts: Array<{ value: string; label?: string }> = Array.isArray(cfg.options) ? cfg.options : [];
+  if (opts.length) {
+    displayMaps[f.key] = {};
+    for (const o of opts) {
+      if (o && o.value != null) displayMaps[f.key][String(o.value)] = String(o.label ?? o.value);
     }
+  }
+}
 
-    // display maps for select/multiselect (from static options in config)
-    const displayMaps: Record<string, Record<string, string>> = {};
-    for (const f of form.fields) {
-      const cfg = (f.config ?? {}) as any;
-      const opts: Array<{ value: string; label?: string }> = Array.isArray(cfg.options) ? cfg.options : [];
-      if (opts.length) {
-        displayMaps[f.key] = {};
-        for (const o of opts) {
-          if (o && o.value != null) displayMaps[f.key][String(o.value)] = String(o.label ?? o.value);
-        }
-      }
-    }
-
-    // schema for client
-    const schema = form.fields.map((f) => ({
-      key: f.key,
-      type: f.type,
-      config: f.config || {},
-    }));
+// schema for client - INCLUDE ORDER FIELD and only include visible columns
+const schema = form.fields
+  .filter(f => visibleColumns.includes(f.key)) // Only include visible fields
+  .map((f) => ({
+    key: f.key,
+    type: f.type,
+    config: f.config || {},
+    order: f.order || 0, // Default to 0 if undefined
+  }))
+  .sort((a, b) => (a.order || 0) - (b.order || 0)); // Sort by order
 
     // ---------- WHERE (filters) ----------
     const params: any[] = [];
@@ -426,6 +454,7 @@ export async function GET(
         key: f.key,
         table: (f.config as any).tableSelect.table as string,
         type: (f.config as any).tableSelect.type as string,
+        order: f.order, // Add this if needed
       }));
 
     for (const tf of tableSelectFields) {

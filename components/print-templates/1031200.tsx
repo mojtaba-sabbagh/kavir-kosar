@@ -248,12 +248,7 @@ export default function CustomPrint1031200({
           <span className="font-bold ml-[10px] min-w-[60px]">گیرنده:</span>
           <span className="border-b border-dashed border-gray-800 flex-grow px-2 min-h-[20px] text-[11pt]">{address}</span>
         </div>
-        
-        <div className="flex items-start mb-[15px]">
-          <span className="font-bold ml-[10px] min-w-[80px]">توزیع کننده:</span>
-          <span className="border-b border-dashed border-gray-800 px-2 min-w-[150px] min-h-[20px] text-center text-[11pt]">۰۹۱۶۵۸۳۴۹۱</span>
-        </div>
-        
+
         <div className="flex items-start">
           <span className="font-bold ml-[10px] min-w-[80px]">تاریخ تحویل:</span>
           <span className="border-b border-dashed border-gray-800 px-2 min-w-[100px] min-h-[20px] text-center">{deliver}</span>

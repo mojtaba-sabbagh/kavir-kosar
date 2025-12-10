@@ -14,10 +14,16 @@ export default async function BuilderPage(props: { params: Promise<{ id: string 
     }),
   ]);
 
+  // Ensure config is properly serialized - convert to plain JSON objects
+  const serializedFields = fields.map(f => ({
+    ...f,
+    config: f.config ? JSON.parse(JSON.stringify(f.config)) : {}
+  }));
+
   return (
     <FormBuilder
       form={formInfo!}
-      fields={fields}
+      fields={serializedFields}
       initialReportConfig={{
         visibleColumns: report?.visibleColumns ?? [],
         filterableKeys: report?.filterableKeys ?? [],

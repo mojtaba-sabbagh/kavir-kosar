@@ -369,7 +369,11 @@ export default function FormBuilder({
   allForms: AllFormLite[];
 }) {
   const [form, setForm] = useState(initialForm);
-  const [fields, setFields] = useState<Field[]>(initialFields);
+  // Ensure all fields have a config object (never undefined)
+  const [fields, setFields] = useState<Field[]>(initialFields.map(f => ({
+    ...f,
+    config: f.config ?? {}
+  })));
   const [reportCfg, setReportCfg] = useState<ReportConfig>(initialReportConfig);
   const [msg, setMsg] = useState<string|null>(null);
   const [err, setErr] = useState<string|null>(null);

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { FormField, FieldType } from '@prisma/client';
 import { isLtrField, optionLabel } from '@/lib/forms/field-utils';
 import KardexPicker from './KardexPicker';
@@ -42,9 +42,49 @@ function fmtFaTime(iso?: string | null) {
 function getEmptyRow(fields: Pick<FormField, 'key'|'type'|'config'>[]): SubformInstance {
   const row: SubformInstance = {};
   for (const f of fields) {
-    row[f.key] = getEmptyValueForType(f.type);
+    row[f.key] = resolveDefaultValue(f);
   }
   return row;
+}
+
+function resolveDefaultValue(field: Pick<FormField, 'type'|'config'>): any {
+  const cfg = (field.config ?? {}) as any;
+  
+  if (cfg.defaultValue === undefined) {
+    return getEmptyValueForType(field.type);
+  }
+
+  switch (field.type) {
+    case 'date':
+      if (cfg.defaultValue === 'today') {
+        return new Date().toISOString().split('T')[0];
+      }
+      return cfg.defaultValue;
+
+    case 'datetime':
+      if (cfg.defaultValue === 'now') {
+        return new Date().toISOString();
+      }
+      return cfg.defaultValue;
+
+    case 'checkbox':
+      return Boolean(cfg.defaultValue);
+
+    case 'number':
+      return cfg.defaultValue === '' ? '' : Number(cfg.defaultValue);
+
+    case 'multiselect':
+    case 'entryRefMulti':
+      return Array.isArray(cfg.defaultValue) ? cfg.defaultValue : [];
+
+    case 'tableSelect':
+    case 'kardexItem':
+    case 'entryRef':
+      return cfg.defaultValue || '';
+
+    default:
+      return cfg.defaultValue;
+  }
 }
 
 function getEmptyValueForType(type: string): any {
@@ -186,7 +226,7 @@ export default function RepeatingSubform({ label, subformFields, value, onChange
                       <span className="font-medium">{f.labelFa}:</span>
                       {' '}
                       <span className="text-gray-700">
-                        {formatCellValue(row[f.key], f.type)}
+                        <ResolvableValue value={row[f.key]} type={f.type} config={f.config} />
                       </span>
                     </div>
                   ))}
@@ -381,6 +421,114 @@ function SubformField({
       )}
     </div>
   );
+}
+
+/** Component to resolve and display tableSelect/kardexItem/select/multiselect values */
+function ResolvableValue({ value, type, config }: { value: any; type: string; config: any }) {
+  const [resolvedLabel, setResolvedLabel] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!value) {
+      return;
+    }
+
+    const cfg = (config ?? {}) as any;
+
+    // Handle select fields (from config options)
+    if (type === 'select' && cfg?.options) {
+      const options = Array.isArray(cfg.options) ? cfg.options : [];
+      const found = options.find((opt: any) => String(opt.value) === String(value));
+      if (found) {
+        setResolvedLabel(optionLabel(found));
+      } else {
+        setResolvedLabel(value);
+      }
+      return;
+    }
+
+    // Handle multiselect fields (from config options)
+    if (type === 'multiselect' && cfg?.options) {
+      const options = Array.isArray(cfg.options) ? cfg.options : [];
+      const values = Array.isArray(value) ? value : [];
+      const labels = values
+        .map((v: string) => {
+          const found = options.find((opt: any) => String(opt.value) === String(v));
+          return found ? optionLabel(found) : v;
+        })
+        .filter(Boolean);
+      
+      if (labels.length > 0) {
+        setResolvedLabel(labels.join('، ')); // Persian comma separator
+      } else {
+        setResolvedLabel(null);
+      }
+      return;
+    }
+
+    // Handle checkbox (yes/no)
+    if (type === 'checkbox') {
+      setResolvedLabel(value ? 'بله' : 'خیر');
+      return;
+    }
+
+    // Handle remote-loaded values (kardexItem, tableSelect)
+    if (type !== 'tableSelect' && type !== 'kardexItem') {
+      return;
+    }
+
+    setLoading(true);
+
+    if (type === 'kardexItem') {
+      // Resolve kardex item
+      fetch(`/api/kardex/search?q=${encodeURIComponent(value)}&limit=1`)
+        .then(res => res.json())
+        .then(data => {
+          if (data && Array.isArray(data.items) && data.items.length > 0) {
+            setResolvedLabel(data.items[0].nameFa);
+          } else {
+            setResolvedLabel(value);
+          }
+        })
+        .catch(() => setResolvedLabel(value))
+        .finally(() => setLoading(false));
+    } else if (type === 'tableSelect') {
+      // Resolve table select item
+      const table = (cfg?.tableSelect?.table || cfg?.table || 'fixedInformation').trim();
+      const tableType = (cfg?.tableSelect?.type || cfg?.type || '').trim();
+      
+      const params = new URLSearchParams();
+      params.set('table', table);
+      if (tableType) params.set('type', tableType);
+      params.set('q', value);
+      params.set('limit', '1');
+
+      fetch(`/api/table-select?${params.toString()}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data?.options && Array.isArray(data.options) && data.options.length > 0) {
+            setResolvedLabel(data.options[0].label);
+          } else {
+            setResolvedLabel(value);
+          }
+        })
+        .catch(() => setResolvedLabel(value))
+        .finally(() => setLoading(false));
+    }
+  }, [value, type, config]);
+
+  if (loading) {
+    return <span className="text-gray-400 text-xs">...</span>;
+  }
+
+  if (type === 'multiselect') {
+    const values = Array.isArray(value) ? value : [];
+    if (values.length === 0) return <span>—</span>;
+    // Return count if labels couldn't be resolved
+    if (!resolvedLabel) return <span>{values.length} مورد</span>;
+  }
+
+  return <span>{resolvedLabel || value || '—'}</span>;
 }
 
 /** Helper to format cell values for summary display */

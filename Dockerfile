@@ -22,6 +22,12 @@ RUN npm run build
 # Stage 3: Runner - create the final, lean production image
 FROM node:18-alpine AS runner
 WORKDIR /app
+
+# Install required tools for backup functionality
+# postgresql-client provides pg_dump for database backups
+# tar and gzip are needed for creating backup archives
+RUN apk add --no-cache postgresql-client tar gzip
+
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 

@@ -170,7 +170,7 @@ export default function AIReportGenerator() {
                 onClick={() => setShowHistory(!showHistory)}
                 className="px-6 py-2 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 transition-colors"
               >
-                تاریخ ({savedReports.length})
+                تاریخچه ({savedReports.length})
               </button>
             </div>
           </div>

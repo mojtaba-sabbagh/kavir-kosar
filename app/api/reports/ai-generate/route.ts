@@ -3,6 +3,31 @@ import { generateReportFromRequirement, getSavedReports, reExecuteSavedReport } 
 import { NextRequest, NextResponse } from 'next/server';
 
 /**
+ * Convert BigInt values to strings for JSON serialization
+ */
+function convertBigIntToString(obj: any): any {
+  if (obj === null || obj === undefined) return obj;
+  
+  if (typeof obj === 'bigint') {
+    return obj.toString();
+  }
+  
+  if (typeof obj === 'object') {
+    if (Array.isArray(obj)) {
+      return obj.map(convertBigIntToString);
+    }
+    
+    const converted: any = {};
+    for (const [key, value] of Object.entries(obj)) {
+      converted[key] = convertBigIntToString(value);
+    }
+    return converted;
+  }
+  
+  return obj;
+}
+
+/**
  * POST /api/reports/ai-generate
  * Generate a report from a Farsi natural language requirement
  */
@@ -50,7 +75,7 @@ export async function POST(request: NextRequest) {
       success: true,
       sql: result.sql,
       columns: result.columns,
-      results: result.results,
+      results: convertBigIntToString(result.results),
       rowCount: result.rowCount,
       executionTime: result.executionTime,
     });

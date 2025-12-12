@@ -190,14 +190,19 @@ export default function AdminKardexClient() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 text-center">
-                {['کد','نام','موجودی','موجودی ابتدای دوره','انبار','نقطه سفارش','وزن واحد',''].map((h, i) => (
+                {['ردیف','کد','نام','موجودی','موجودی ابتدای دوره','انبار','نقطه سفارش','وزن واحد',''].map((h, i) => (
                   <th key={i} className="p-2">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {rows.map((it) => (
+              {rows.map((it, idx) => (
                 <tr key={it.id} className="border-t">
+                  {/* Index column */}
+                  <td className="p-2 text-center w-12 min-w-12 font-medium">
+                    {idx + 1}
+                  </td>
+
                   {/* Reduced width for code column */}
                   <td className="p-2 font-mono w-30 min-w-30">
                     <input

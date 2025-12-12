@@ -169,17 +169,17 @@ export async function POST(req: NextRequest) {
       const connParams = parseConnectionString(databaseUrl);
       const psqlCmd = findCommand('psql');
 
-      // First, drop all connections and recreate the database
-      // Use -1 flag to disable transactions (DROP DATABASE cannot run inside a transaction)
+      // First, drop the database by connecting to postgres database
+      // Then create a new database
       await new Promise<void>((resolve, reject) => {
         const env = { ...process.env, PGPASSWORD: connParams.password };
         
-        // Drop and recreate database with -1 flag (no transactions)
-        const dropCmd = `"${psqlCmd}" -1 --host="${connParams.host}" --port="${connParams.port}" --username="${connParams.user}" --no-password -c "DROP DATABASE IF EXISTS ${connParams.database}; CREATE DATABASE ${connParams.database};"`;
+        // Connect to postgres database (not the target database) and drop/create target database
+        const dropCmd = `"${psqlCmd}" --host="${connParams.host}" --port="${connParams.port}" --username="${connParams.user}" --no-password -d postgres -c "DROP DATABASE IF EXISTS ${connParams.database};"`;
         
         exec(dropCmd, { env, maxBuffer: 1024 * 1024 * 100 }, (error) => {
           if (error) {
-            console.error('Database drop/create error:', error.message);
+            console.error('Database drop error:', error.message);
             reject(error);
           } else {
             resolve();
@@ -187,7 +187,25 @@ export async function POST(req: NextRequest) {
         });
       });
 
-      console.log('Database dropped and recreated');
+      console.log('Database dropped');
+
+      // Now create the database
+      await new Promise<void>((resolve, reject) => {
+        const env = { ...process.env, PGPASSWORD: connParams.password };
+        
+        const createCmd = `"${psqlCmd}" --host="${connParams.host}" --port="${connParams.port}" --username="${connParams.user}" --no-password -d postgres -c "CREATE DATABASE ${connParams.database};"`;
+        
+        exec(createCmd, { env, maxBuffer: 1024 * 1024 * 100 }, (error) => {
+          if (error) {
+            console.error('Database create error:', error.message);
+            reject(error);
+          } else {
+            resolve();
+          }
+        });
+      });
+
+      console.log('Database created');
 
       // Now restore the database dump
       await new Promise<void>((resolve, reject) => {

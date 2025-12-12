@@ -170,11 +170,12 @@ export async function POST(req: NextRequest) {
       const psqlCmd = findCommand('psql');
 
       // First, drop all connections and recreate the database
+      // Use -1 flag to disable transactions (DROP DATABASE cannot run inside a transaction)
       await new Promise<void>((resolve, reject) => {
         const env = { ...process.env, PGPASSWORD: connParams.password };
         
-        // Drop and recreate database
-        const dropCmd = `"${psqlCmd}" --host="${connParams.host}" --port="${connParams.port}" --username="${connParams.user}" --no-password -c "DROP DATABASE IF EXISTS ${connParams.database}; CREATE DATABASE ${connParams.database};"`;
+        // Drop and recreate database with -1 flag (no transactions)
+        const dropCmd = `"${psqlCmd}" -1 --host="${connParams.host}" --port="${connParams.port}" --username="${connParams.user}" --no-password -c "DROP DATABASE IF EXISTS ${connParams.database}; CREATE DATABASE ${connParams.database};"`;
         
         exec(dropCmd, { env, maxBuffer: 1024 * 1024 * 100 }, (error) => {
           if (error) {

@@ -106,13 +106,13 @@ export default function RestorePage() {
               </label>
               <input
                 type="file"
-                accept=".tar.gz"
+                accept=".tar.gz,application/gzip,application/x-gzip,application/x-tar"
                 onChange={handleFileSelect}
                 disabled={loading}
                 className="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
               />
               <p className="text-xs text-gray-500 mt-2">
-                فقط فایل‌های .tar.gz پشتیبان شده را انتخاب کنید (مثال: backup-2025-12-11.tar.gz)
+                فقط فایل‌های .tar.gz پشتیبان شده را انتخاب کنید (مثال: backup-1403-09-21.tar.gz)
               </p>
             </div>
 

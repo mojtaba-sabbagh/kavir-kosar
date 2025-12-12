@@ -252,8 +252,8 @@ export default function AdminKardexClient() {
                     />
                   </td>
 
-                  {/* Medium width for storage */}
-                  <td className="p-2 w-38 min-w-38">
+                  {/* Reduced width for storage (2/3 of original) */}
+                  <td className="p-2 w-24 min-w-24">
                     <input
                       className="border rounded px-2 py-1 w-full"
                       value={it.storage ?? ''}

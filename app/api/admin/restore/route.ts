@@ -6,27 +6,78 @@ import * as os from 'os';
 import { requireAdminOrRedirect } from '@/lib/rbac';
 import { prisma } from '@/lib/db';
 
+// Try to find psql, tar or other commands
 function findCommand(cmd: string): string {
   const commonPaths = [
+    // Standard Unix paths (Linux/Ubuntu)
     `/usr/bin/${cmd}`,
     `/usr/local/bin/${cmd}`,
+    
+    // macOS Homebrew paths
     `/opt/homebrew/bin/${cmd}`,
     `/usr/local/opt/${cmd.startsWith('pg_') ? 'libpq' : cmd}/bin/${cmd}`,
+    
+    // Homebrew on Intel Macs - libpq versions
     `/usr/local/Cellar/libpq/*/bin/${cmd}`,
+    
+    // Direct glob pattern search (for libpq versions)
+    ...(cmd === 'psql' || cmd === 'pg_dump' ? getLibpqPaths(cmd) : []),
+    
+    // Fallback to command in PATH
     cmd,
   ];
 
   for (const cmdPath of commonPaths) {
     try {
+      // Skip glob patterns for direct access
       if (cmdPath.includes('*')) continue;
+      
       fs.accessSync(cmdPath, fs.constants.X_OK);
       return cmdPath;
     } catch {
-      // Continue
+      // Continue to next path
     }
   }
 
   return cmd;
+}
+
+function getLibpqPaths(cmd: string = 'psql'): string[] {
+  const paths: string[] = [];
+  
+  try {
+    // Check /usr/local/Cellar/libpq for any version
+    const cellarPath = '/usr/local/Cellar/libpq';
+    if (fs.existsSync(cellarPath)) {
+      const versions = fs.readdirSync(cellarPath);
+      for (const version of versions) {
+        const cmdPath = path.join(cellarPath, version, 'bin', cmd);
+        if (fs.existsSync(cmdPath)) {
+          paths.push(cmdPath);
+        }
+      }
+    }
+  } catch (err) {
+    // Silently continue if directory doesn't exist
+  }
+
+  try {
+    // Check /opt/homebrew/Cellar/libpq for any version
+    const cellarPath = '/opt/homebrew/Cellar/libpq';
+    if (fs.existsSync(cellarPath)) {
+      const versions = fs.readdirSync(cellarPath);
+      for (const version of versions) {
+        const cmdPath = path.join(cellarPath, version, 'bin', cmd);
+        if (fs.existsSync(cmdPath)) {
+          paths.push(cmdPath);
+        }
+      }
+    }
+  } catch (err) {
+    // Silently continue if directory doesn't exist
+  }
+
+  return paths;
 }
 
 function parseConnectionString(connString: string) {

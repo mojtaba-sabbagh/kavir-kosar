@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { formatJalali } from '@/lib/date-utils';
 
 export default function BackupPage() {
   const [loading, setLoading] = useState(false);
@@ -23,11 +24,12 @@ export default function BackupPage() {
       // Get the blob from response
       const blob = await response.blob();
       
-      // Create download link
+      // Create download link with Jalali date
+      const jalaliDate = formatJalali(new Date()).replace(/\//g, '-');
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `backup-${new Date().toISOString().split('T')[0]}.tar.gz`;
+      a.download = `backup-${jalaliDate}.tar.gz`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);

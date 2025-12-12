@@ -10,6 +10,8 @@ export default function FixedInfoManager() {
   const [q, setQ] = useState('');
   const [type, setType] = useState('');
   const [page, setPage] = useState(1);
+  const [types, setTypes] = useState<string[]>([]);
+  const [loadingTypes, setLoadingTypes] = useState(false);
   const pageSize = 20;
 
   // form state for create/edit
@@ -25,6 +27,25 @@ export default function FixedInfoManager() {
     p.set('pageSize', String(pageSize));
     return `?${p.toString()}`;
   }, [q, type, page]);
+
+  // Load distinct types on mount
+  useEffect(() => {
+    const loadTypes = async () => {
+      setLoadingTypes(true);
+      try {
+        const res = await fetch('/api/table-select/types?table=fixedInformation', { cache: 'no-store' });
+        const j = await res.json();
+        if (res.ok && j.ok) {
+          setTypes(j.types || []);
+        }
+      } catch (e) {
+        console.error('Failed to load types:', e);
+      } finally {
+        setLoadingTypes(false);
+      }
+    };
+    loadTypes();
+  }, []);
 
   const load = async () => {
     const res = await fetch(`/api/admin/fixed-info${qs}`, { cache: 'no-store' });
@@ -72,11 +93,22 @@ export default function FixedInfoManager() {
       <div className="rounded-xl border bg-white p-3 flex flex-wrap items-end gap-3" dir="rtl">
         <div className="flex-1 min-w-60">
           <label className="block text-sm mb-1">جستجو در عنوان</label>
-          <input className="w-full border rounded-md px-3 py-2" value={q} onChange={e=>{ setPage(1); setQ(e.target.value); }} />
+          <input className="w-full border rounded-md px-3 py-2" placeholder="نام یا کد..." value={q} onChange={e=>{ setPage(1); setQ(e.target.value); }} />
         </div>
         <div className="w-60">
-          <label className="block text-sm mb-1">نوع (type)</label>
-          <input className="w-full border rounded-md px-3 py-2" value={type} onChange={e=>{ setPage(1); setType(e.target.value); }} />
+          <label className="block text-sm mb-1">نوع</label>
+          <select 
+            className="w-full border rounded-md px-3 py-2"
+            title="فیلتر بر اساس نوع"
+            value={type} 
+            onChange={e=>{ setPage(1); setType(e.target.value); }}
+            disabled={loadingTypes}
+          >
+            <option value="">— همه انواع —</option>
+            {types.map(t => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
         </div>
         <button className="ms-auto rounded-md border px-3 py-2 hover:bg-gray-50" onClick={resetForm}>افزودن مورد جدید</button>
       </div>

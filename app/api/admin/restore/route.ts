@@ -169,12 +169,27 @@ export async function POST(req: NextRequest) {
       const connParams = parseConnectionString(databaseUrl);
       const psqlCmd = findCommand('psql');
 
-      // First, drop the database by connecting to postgres database
-      // Then create a new database
+      // First, terminate all connections to the database
+      console.log('Terminating active connections...');
       await new Promise<void>((resolve, reject) => {
         const env = { ...process.env, PGPASSWORD: connParams.password };
         
-        // Connect to postgres database (not the target database) and drop/create target database
+        const terminateCmd = `"${psqlCmd}" --host="${connParams.host}" --port="${connParams.port}" --username="${connParams.user}" --no-password -d postgres -c "SELECT pg_terminate_backend(pg_stat_activity.pid) FROM pg_stat_activity WHERE pg_stat_activity.datname = '${connParams.database}' AND pid <> pg_backend_pid();"`;
+        
+        exec(terminateCmd, { env, maxBuffer: 1024 * 1024 * 100 }, (error) => {
+          if (error) {
+            console.error('Terminate connections error:', error.message);
+            // Don't reject, continue anyway
+          }
+          resolve();
+        });
+      });
+
+      // Now drop the database
+      console.log('Dropping database...');
+      await new Promise<void>((resolve, reject) => {
+        const env = { ...process.env, PGPASSWORD: connParams.password };
+        
         const dropCmd = `"${psqlCmd}" --host="${connParams.host}" --port="${connParams.port}" --username="${connParams.user}" --no-password -d postgres -c "DROP DATABASE IF EXISTS ${connParams.database};"`;
         
         exec(dropCmd, { env, maxBuffer: 1024 * 1024 * 100 }, (error) => {
@@ -190,6 +205,7 @@ export async function POST(req: NextRequest) {
       console.log('Database dropped');
 
       // Now create the database
+      console.log('Creating database...');
       await new Promise<void>((resolve, reject) => {
         const env = { ...process.env, PGPASSWORD: connParams.password };
         

@@ -116,7 +116,7 @@ ${schema}
    - payload->>'fieldKey' returns text/string values
    - payload->'fieldKey'::numeric returns numeric values
    - payload->>'fieldKey'::date returns dates
-9. Include comments in the query explaining each part
+9. DO NOT include any SQL comments (-- or /* */) in the generated query
 10. The query MUST start with SELECT and MUST be a read-only query
 11. Return ONLY the SQL query wrapped in \`\`\`sql ... \`\`\` blocks, with no other text
 
@@ -139,9 +139,8 @@ function extractSql(response: string): string | null {
 /**
  * Validate SQL query for safety
  */
-function validateSql(sql: string): { valid: boolean; error?: string } {
+function validateSql(sql: string): { valid: boolean; error?: string; cleanedSql?: string } {
   // Dangerous keywords that should not appear in SELECT queries
-  // Note: SQL comments (-- and /* */) are safe and allowed
   const dangerousKeywords = [
     'DROP',
     'DELETE',
@@ -155,7 +154,13 @@ function validateSql(sql: string): { valid: boolean; error?: string } {
     'PRAGMA',
   ];
 
-  const upperSql = sql.toUpperCase();
+  // Remove comments from SQL for validation
+  const cleanedSql = sql
+    .replace(/--[^\n]*/g, '') // Remove single-line comments
+    .replace(/\/\*[\s\S]*?\*\//g, '') // Remove multi-line comments
+    .trim();
+
+  const upperSql = cleanedSql.toUpperCase();
 
   for (const keyword of dangerousKeywords) {
     if (upperSql.includes(keyword)) {
@@ -164,21 +169,11 @@ function validateSql(sql: string): { valid: boolean; error?: string } {
   }
 
   // Ensure query starts with SELECT (after stripping comments and whitespace)
-  const cleanedSql = sql
-    .replace(/--[^\n]*/g, '') // Remove single-line comments
-    .replace(/\/\*[\s\S]*?\*\//g, '') // Remove multi-line comments
-    .trim();
-  
-  if (!cleanedSql.toUpperCase().startsWith('SELECT')) {
+  if (!upperSql.startsWith('SELECT')) {
     return { valid: false, error: 'Query must start with SELECT' };
   }
 
-  // Check for comment injection attempts
-  if (sql.includes('--') || sql.includes('/*')) {
-    return { valid: false, error: 'Comments not allowed in generated queries' };
-  }
-
-  return { valid: true };
+  return { valid: true, cleanedSql };
 }
 
 /**
@@ -228,11 +223,14 @@ export async function generateReportFromRequirement(
       };
     }
 
+    // Use cleaned SQL (comments removed) for execution
+    const sqlToExecute = validation.cleanedSql || generatedSql;
+
     // 6. Execute the query
     let results: Record<string, any>[] = [];
     try {
       // Use raw query with parameterized safety
-      results = await prisma.$queryRawUnsafe(generatedSql);
+      results = await prisma.$queryRawUnsafe(sqlToExecute);
 
       // Limit results to prevent memory issues
       const maxRows = parseInt(process.env.AI_REPORT_MAX_ROWS || '10000', 10);

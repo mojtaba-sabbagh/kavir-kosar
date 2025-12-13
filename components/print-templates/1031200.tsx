@@ -122,12 +122,12 @@ export default function CustomPrint1031200({
       <div className="product-table-section mb-[30px]">
         <table className="w-full border-collapse border border-gray-800">
           <thead>
-            <tr>
-              <th className="border border-gray-800 p-2 text-center w-[40px] bg-gray-100">ردیف</th>
-              <th className="border border-gray-800 p-2 text-center bg-gray-100">شرح کالا</th>
-              <th className="border border-gray-800 p-2 text-center w-[80px] bg-gray-100">تعداد</th>
-              <th className="border border-gray-800 p-2 text-center w-[60px] bg-gray-100">واحد</th>
-              <th className="border border-gray-800 p-2 text-center bg-gray-100">ملاحظات</th>
+            <tr className="bg-gray-200">
+              <th className="border border-gray-800 p-2 text-center w-[40px] bg-gray-200">ردیف</th>
+              <th className="border border-gray-800 p-2 text-center bg-gray-200">شرح کالا</th>
+              <th className="border border-gray-800 p-2 text-center w-[80px] bg-gray-200">تعداد</th>
+              <th className="border border-gray-800 p-2 text-center w-[60px] bg-gray-200">واحد</th>
+              <th className="border border-gray-800 p-2 text-center bg-gray-200">ملاحظات</th>
             </tr>
           </thead>
           <tbody>
@@ -242,7 +242,7 @@ export default function CustomPrint1031200({
       </div>
       
       {/* Signatures section */}
-      <div className="signatures-section mb-[30px]">
+      <div className="signatures-section mb-[30px]" style={{ marginTop: '1cm' }}>
         <div className="flex justify-between">
           <div className="text-center w-1/2">
             <div className="mb-[10px] text-[11pt]">مسئول انبار:</div>

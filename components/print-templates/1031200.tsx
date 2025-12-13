@@ -102,13 +102,13 @@ export default function CustomPrint1031200({
   );
   
   return (
-    <div className="custom-print-exit-permit font-IRYekan text-[10pt]" dir="rtl">
+    <div className="custom-print-exit-permit font-IRYekan text-[10pt]" dir="rtl" style={{ marginTop: '-3cm' }}>
       {/* Date and number on the LEFT side (which is text-right in RTL) */}
-      <div className="mb-[20px]">
+      <div className="mb-[20px]" style={{ marginTop: '-1cm', marginRight: '3cm' }}>
         <div className="flex justify-end"> {/* This aligns content to the LEFT in RTL */}
           <div className="text-right"> {/* text-right aligns to LEFT in RTL */}
-            <div className="text-[10pt] mb-1">تاریخ : {date}</div>
-            <div className="text-[10pt]">شماره : {andikator}</div>
+            <div className="text-[10pt] mb-1">{date}</div>
+            <div className="text-[10pt]">{andikator}</div>
           </div>
         </div>
       </div>
@@ -228,20 +228,6 @@ export default function CustomPrint1031200({
         </div>
       </div>
       
-      {/* Signatures section */}
-      <div className="signatures-section mb-[30px]">
-        <div className="flex justify-between">
-          <div className="text-center w-1/2">
-            <div className="mb-[10px] text-[11pt]">مسئول انبار:</div>
-            <div className="mb-[20px] border-gray-800 pt-2 min-h-[40px] text-[11pt]">{warehouseManager}</div>
-          </div>
-          <div className="text-center w-1/2">
-            <div className="mb-[10px] text-[11pt]">راننده ماشین:</div>
-            <div className="mb-[20px] border-gray-800 pt-2 min-h-[40px] text-[11pt]">{driver}</div>
-          </div>
-        </div>
-      </div>
-      
       {/* Receiver section */}
       <div className="receiver-section">
         <div className="flex items-start mb-[15px]">
@@ -252,6 +238,20 @@ export default function CustomPrint1031200({
         <div className="flex items-start">
           <span className="font-bold ml-[10px] min-w-[80px]">تاریخ تحویل:</span>
           <span className="border-b border-dashed border-gray-800 px-2 min-w-[100px] min-h-[20px] text-center">{deliver}</span>
+        </div>
+      </div>
+      
+      {/* Signatures section */}
+      <div className="signatures-section mb-[30px]">
+        <div className="flex justify-between">
+          <div className="text-center w-1/2">
+            <div className="mb-[10px] text-[11pt]">مسئول انبار:</div>
+            <div className="mb-[20px] border-gray-800 pt-2 min-h-[40px] text-[11pt]">{/* warehouseManager */}</div>
+          </div>
+          <div className="text-center w-1/2">
+            <div className="mb-[10px] text-[11pt]">راننده ماشین:</div>
+            <div className="mb-[20px] border-gray-800 pt-2 min-h-[40px] text-[11pt]">{/* driver */}</div>
+          </div>
         </div>
       </div>
       
